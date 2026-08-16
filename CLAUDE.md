@@ -83,3 +83,4 @@ without the user's say-so.
 - Use the org's real My Domain URL (`https://<org>.sandbox.my.salesforce.com`) as `SF_LOGIN_URL`, not `test.salesforce.com` — Salesforce dropped legacy hostname support for External Client Apps as of Spring '26.
 - The Connected App needs `refresh_token`/`offline_access` OAuth scope in addition to `api` for JWT bearer to work.
 - The integration user needs a Permission Set both assigned to the user AND added to the app's pre-authorized list.
+- The JWT signing key can come from either `SF_PRIVATE_KEY_FILE` (path to the `.pem`, for local runs) or `SF_PRIVATE_KEY` (the PEM contents, for cloud runs like Codespaces / mobile Claude Code / GitHub Actions where no file ships). `SF_PRIVATE_KEY` wins if both are set; see `salesforce_client._load_private_key`.

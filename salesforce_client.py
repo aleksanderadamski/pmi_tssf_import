@@ -24,7 +24,9 @@ Setup required before this works:
      (Setup > Connected App > Manage > Edit Policies > Permitted Users:
      "Admin approved users are pre-authorized", then add the integration
      user via a permission set).
-  3. Keep the private key (.pem) out of git; point SF_PRIVATE_KEY_FILE at it.
+  3. Keep the private key out of git. Locally, point SF_PRIVATE_KEY_FILE at the
+     .pem. In a cloud run (Codespaces, mobile Claude Code, GitHub Actions) where
+     no file ships, put the PEM contents in the SF_PRIVATE_KEY secret instead.
 """
 import time
 
@@ -56,9 +58,30 @@ class SalesforceClient:
         self._access_token = None
         self._instance_url = None
 
+    @staticmethod
+    def _load_private_key() -> bytes:
+        """The RS256 signing key, from SF_PRIVATE_KEY (PEM contents, for cloud
+        runs) if set, else from the SF_PRIVATE_KEY_FILE path (local runs).
+        Tolerates a secret stored with escaped "\\n" line breaks — some secret
+        stores mangle real newlines — since PEM base64 never contains a
+        backslash, so that substitution is safe.
+        """
+        if config.SF_PRIVATE_KEY:
+            key = config.SF_PRIVATE_KEY
+            if "-----BEGIN" in key and "\\n" in key:
+                # Repair a secret whose newlines were escaped (\n or \r\n).
+                key = key.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "")
+            return key.encode() if isinstance(key, str) else key
+        if config.SF_PRIVATE_KEY_FILE:
+            with open(config.SF_PRIVATE_KEY_FILE, "rb") as f:
+                return f.read()
+        raise RuntimeError(
+            "No Salesforce private key: set SF_PRIVATE_KEY (PEM contents) or "
+            "SF_PRIVATE_KEY_FILE (path to the .pem)."
+        )
+
     def authenticate(self):
-        with open(config.SF_PRIVATE_KEY_FILE, "rb") as f:
-            private_key = f.read()
+        private_key = self._load_private_key()
 
         claim = {
             "iss": config.SF_CLIENT_ID,
