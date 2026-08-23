@@ -64,7 +64,10 @@ doesn't recognize.
 2. In the sandbox: **Setup > App Manager > New Connected App**.
    - Enable OAuth Settings.
    - Callback URL: any placeholder, e.g. `https://login.salesforce.com/services/oauth2/callback` (not actually used by JWT flow).
-   - OAuth Scopes: add **Manage user data via APIs (api)**.
+   - OAuth Scopes: add **both** **Manage user data via APIs (api)** and
+     **Perform requests at any time (refresh_token, offline_access)** — JWT
+     bearer needs the refresh/offline scope too (see `SALESFORCE_SETUP.md`
+     and CLAUDE.md; with `api` alone auth fails `invalid_grant`).
    - Check **Use digital signatures**, upload `salesforce_public_cert.crt`.
    - Save. Wait ~10 minutes for it to propagate.
 3. Copy the **Consumer Key** shown on the app page → `SF_CLIENT_ID` in `.env`.
@@ -162,3 +165,19 @@ Slack/Teams webhook.** When building the Actions workflow:
 - Create a Slack/Teams **incoming webhook** and store its URL as a repo secret
   `FAILURE_WEBHOOK_URL`; pass it into the job's env so `reporting.notify_failures`
   posts a summary the moment a partial failure happens.
+
+## Reminder: certification fields (later effort)
+
+When the certification sync is built (full plan in `TAKEOVER.md` → "certification
+data → flat Contact fields"), two Salesforce-side steps must happen **before**
+the next `--push-salesforce`, or it breaks on unknown/inaccessible fields:
+
+1. **Create the new certification custom fields on Contact** (sandbox first,
+   then production — separate orgs). Planned first build: `PMP_Status__c`
+   (Text 40), `PMP_Start_Date__c` (Date), `PMP_Expiration__c` (Date),
+   `PMP_Original_Grant_Date__c` (Date), `Certifications__c` (Text 255). See
+   `TAKEOVER.md` for the ThoughtSpot source columns and exact mapping.
+2. **Extend the `ThoughtSpot Sync - Contact Access` permission set** with
+   **Read + Edit FLS** on each of those new fields (same as the membership
+   fields — see `SALESFORCE_SETUP.md` step 2b). Do it in every org the sync
+   writes to. Missing FLS surfaces only at push time as `INSUFFICIENT_ACCESS`.
