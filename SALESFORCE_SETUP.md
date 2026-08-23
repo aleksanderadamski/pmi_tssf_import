@@ -126,6 +126,7 @@ platform requirement alongside Create/Edit, so it stays checked.
   | `Membership_ID__c` | ✅ | ✅ |
   | `Chapter_Join_Date__c` | ✅ | ✅ |
   | `Chapter_Expiration__c` | ✅ | ✅ |
+  | `Email` (standard) | ✅ | ✅ |
   | `First Name` (standard) | ✅ | ✅ |
   | `Last Name` (standard) | ✅ | ✅ |
 
@@ -229,3 +230,65 @@ Common failures:
 
 Once `test_sf_auth.py` passes, continue with the push test in `NEXT_STEPS.md`
 (steps 7–8: `--push-salesforce --limit 5`, then a full run).
+
+---
+
+## Troubleshooting (real cases hit during production setup)
+
+These are the exact errors seen while first wiring up the production org, with
+the root cause and fix, most-common first.
+
+### `app_not_found` — "External client app is not installed in this org"
+Auth (`test_sf_auth.py`) fails 400 before any signature check.
+**Cause:** `SF_LOGIN_URL` was the legacy generic host (`https://login.salesforce.com`
+/ `https://test.salesforce.com`). Salesforce dropped legacy hostname support for
+External Client Apps, so JWT sent there can't find the app.
+**Fix:** set `SF_LOGIN_URL` to the org's **real My Domain URL**
+(`https://<org>.my.salesforce.com`), found under **Setup → My Domain → Current
+My Domain URL**. Not `login/test.salesforce.com`, not the `my.salesforce-setup.com`
+Setup UI host, not the `.lightning.force.com` host. `SF_LOGIN_URL` is used both as
+the token endpoint and the JWT `aud`, so this one value must be correct.
+
+### `INVALID_TYPE` — "sObject type 'Contact' is not supported"
+Auth succeeds, but a query/upsert against Contact fails 400.
+**Cause:** the integration user has **no Read** on the Contact object. Usually the
+object permissions were configured in a permission set that is *not the one
+assigned* (e.g. an early `--None--`-licensed set whose assignment failed), or the
+object-level **Read** box was never checked (only field permissions were set).
+**Fix:** in the **assigned** permission set, **Object Settings → Contacts → Read**
+(plus Create/Edit) — see step 2b. Confirm which set is actually assigned under
+**Setup → Users → (user) → Permission Set Assignments**, and remove stray
+experimental sets so there's no ambiguity.
+
+### "The user license doesn't allow the permission: Create Contacts"
+Assigning the permission set to the Salesforce Integration user fails.
+**Cause:** the permission set's **License** was `--None--`, so a permission like
+*Create Contacts* is validated against the bare Salesforce Integration user
+license, which alone doesn't allow it.
+**Fix:** create the permission set with **License = `Salesforce API Integration`**
+(the PSL bundled with the Integration user license) — see step 2a — and confirm
+that PSL is assigned to the user (step 3a).
+
+### Contact not selectable in a permission set's Object Settings
+You set the permission set License and now can't add Contact field/object perms.
+**Cause:** the License was set to the **user license** `Salesforce Integration`
+instead of the **permission set license** `Salesforce API Integration`. The user
+license option is more restrictive and doesn't expose Contact. These two
+similarly-named things are different: the user license goes on the *user*; the
+PSL goes in the permission set's *License* field.
+**Fix:** use **`Salesforce API Integration`** as the permission set License.
+
+### `API Enabled` missing from System Permissions
+In a `Salesforce API Integration`-licensed permission set, there is no
+`API Enabled` checkbox to turn on.
+**Cause / fix:** none needed — the Salesforce Integration license is API-only by
+definition, so API access is inherent and not a togglable permission. Skip it
+(see step 2c). It's only a real step for full Salesforce / Platform licenses.
+
+### `INSUFFICIENT_ACCESS` on a field, only at push time
+A field-specific error appears during `--push-salesforce`, not during auth.
+**Cause:** the permission set is missing **FLS** for that field. (Hit when adding
+`Email` to the sync — the standard `Contact.Email` field still needs FLS for the
+API-only user.)
+**Fix:** add **Read+Edit FLS** for that field in the assigned permission set
+(step 2b), same as the membership fields.
