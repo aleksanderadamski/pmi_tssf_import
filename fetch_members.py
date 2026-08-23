@@ -302,6 +302,15 @@ def main():
         "For testing --push-salesforce safely before a full run.",
     )
     parser.add_argument(
+        "--personids",
+        default=None,
+        help="Comma-separated Personid (PMI ID) list. With --push-salesforce, "
+        "restrict the push to just these members — for a targeted re-sync of "
+        "specific Contacts. Applied to the fetched active set; any id not in "
+        "that set is reported and skipped. Combined with --limit, the id "
+        "filter runs first.",
+    )
+    parser.add_argument(
         "--format",
         choices=["csv", "xlsx", "json"],
         default="csv",
@@ -322,9 +331,24 @@ def main():
         from salesforce_client import SalesforceClient
         from reporting import report_upsert
 
-        push_records = records[: args.limit] if args.limit is not None else records
+        push_records = records
+        if args.personids is not None:
+            wanted = {p.strip() for p in args.personids.split(",") if p.strip()}
+            push_records = [r for r in push_records if str(r["Personid"]) in wanted]
+            missing = wanted - {str(r["Personid"]) for r in push_records}
+            print(f"--personids: {len(push_records)} of {len(records)} fetched records "
+                  f"match the {len(wanted)} requested id(s).")
+            if missing:
+                print(f"WARNING: {len(missing)} requested id(s) not in the currently-active "
+                      f"set (skipped): {sorted(missing)}")
+
         if args.limit is not None:
-            print(f"--limit {args.limit}: pushing {len(push_records)} of {len(records)} records.")
+            push_records = push_records[: args.limit]
+            print(f"--limit {args.limit}: pushing {len(push_records)} records.")
+
+        if not push_records:
+            print("No records to push after filtering — nothing to do.")
+            return
         results = SalesforceClient().upsert_contacts(push_records)
         failure_count = report_upsert(push_records, results)
         # Non-zero exit so a scheduler flags the run as failed (see reporting.py).
