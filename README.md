@@ -15,6 +15,7 @@ matched on `Personid`.
   - `Firstname` → `Contact.FirstName`
   - `Lastname` → `Contact.LastName` (required by Salesforce whenever the
     upsert creates a new Contact rather than updating an existing one)
+  - `Primaryemail` → `Contact.Email` (standard field)
   - `Startdateforterm` (deduped, see below) → `Contact.Chapter_Join_Date__c`
   - `Enddateforterm` (deduped) → `Contact.Chapter_Expiration__c`
 
@@ -66,8 +67,8 @@ pulls the authoritative live column list instead.
    ```
    (`--format` is `csv` by default; `xlsx` or `json` also available.) Writes
    `output/members.<ext>` with one deduped, currently-active row per member:
-   `Personid, Firstname, Lastname, Startdateforterm, Enddateforterm` (dates
-   as epoch seconds).
+   `Personid, Firstname, Lastname, Primaryemail, Startdateforterm,
+   Enddateforterm` (dates as epoch seconds).
 5. Once that file looks right and Salesforce is configured (see
    `salesforce_client.py` docstring for the Connected App setup), sync it in:
    ```

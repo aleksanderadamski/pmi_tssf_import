@@ -22,7 +22,8 @@ Modes:
                                               a sandbox before running this
                                               against production.
 
-Fields pulled: Personid, Firstname, Lastname, Startdateforterm, Enddateforterm.
+Fields pulled: Personid, Firstname, Lastname, Primaryemail, Startdateforterm,
+Enddateforterm.
 Firstname/Lastname are needed because Salesforce requires Contact.LastName on
 insert — when a Personid has no existing matching Contact, the upsert creates
 one, and a bare record with no name fails REQUIRED_FIELD_MISSING. Add more
@@ -62,7 +63,7 @@ from thoughtspot_client import ThoughtSpotClient
 from date_utils import to_epoch_seconds, is_plausible_date_epoch
 
 # Plain field names, used as dict/CSV keys and for matching response columns.
-FIELDS = ["Personid", "Firstname", "Lastname", "Startdateforterm", "Enddateforterm"]
+FIELDS = ["Personid", "Firstname", "Lastname", "Primaryemail", "Startdateforterm", "Enddateforterm"]
 ACTIVE_FIELD = "Isactive"
 
 # Date columns default to a MONTHLY bucket in ThoughtSpot search unless bound
@@ -72,6 +73,7 @@ QUERY_FIELDS = [
     "Personid",
     "Firstname",
     "Lastname",
+    "Primaryemail",
     "Startdateforterm|daily",
     "Enddateforterm|daily",
     ACTIVE_FIELD,
@@ -217,6 +219,7 @@ def dedupe_by_person(records: list[dict]) -> list[dict]:
             )
             existing["Firstname"] = _first_non_null(existing["Firstname"], r["Firstname"])
             existing["Lastname"] = _first_non_null(existing["Lastname"], r["Lastname"])
+            existing["Primaryemail"] = _first_non_null(existing["Primaryemail"], r["Primaryemail"])
     return list(by_person.values())
 
 
