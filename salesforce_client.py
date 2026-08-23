@@ -7,6 +7,7 @@ Field mapping (ThoughtSpot -> Salesforce Contact):
                                            without it, upserting a Personid
                                            with no existing matching Contact
                                            fails REQUIRED_FIELD_MISSING)
+  Primaryemail      -> Email             (standard Contact field)
   Startdateforterm  -> Chapter_Join_Date__c
   Enddateforterm    -> Chapter_Expiration__c
 
@@ -43,6 +44,7 @@ CHUNK_SIZE = 200  # SObject Collections limit per call
 FIELD_MAP = {
     "Firstname": ("FirstName", None),
     "Lastname": ("LastName", None),
+    "Primaryemail": ("Email", None),
     "Startdateforterm": ("Chapter_Join_Date__c", to_salesforce_date),
     "Enddateforterm": ("Chapter_Expiration__c", to_salesforce_date),
 }
@@ -117,8 +119,8 @@ class SalesforceClient:
 
     def upsert_contacts(self, records: list[dict]) -> list[dict]:
         """records: list of {"Personid": ..., "Firstname": ..., "Lastname": ...,
-        "Startdateforterm": ..., "Enddateforterm": ...} as pulled from
-        ThoughtSpot (raw column names).
+        "Primaryemail": ..., "Startdateforterm": ..., "Enddateforterm": ...} as
+        pulled from ThoughtSpot (raw column names).
 
         Returns the flat list of per-record results Salesforce returns
         (in input order): {"id":..., "success": bool, "errors": [...]}.
