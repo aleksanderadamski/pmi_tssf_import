@@ -110,15 +110,35 @@ Connected App.
 
 ### 2b. Contact object + field permissions
 
-The sync **upserts** Contacts (creates new + edits existing), so it needs
-Create **and** Edit. It does **not** read Contact data (matching on
-`Membership_ID__c` happens server-side in the upsert), but Read is a
-platform requirement alongside Create/Edit, so it stays checked.
+The sync creates new Contacts and edits existing ones, so it needs Create
+**and** Edit.
+
+**Read is load-bearing, not a formality.** The sync resolves
+`Membership_ID__c` → Contact Id with a SOQL query of its own before writing
+(`salesforce_client.fetch_existing_contact_ids`), so Contact Read and
+`Membership_ID__c` read-level FLS are what decide whether an existing member is
+updated or mistaken for a new one.
+
+> **This is the failure mode that produced 209 `DUPLICATE_VALUE` errors on a
+> 2,463-record production run.** A Contact the integration user cannot *see* is
+> invisible to that lookup, but still occupies `Membership_ID__c` in the org-wide
+> unique index — so the sync tries to insert and the index rejects it, naming
+> the very record it should have updated. Record-level visibility matters as
+> much as FLS here: if Contact org-wide default is Private and these Contacts
+> are owned by someone else, the sync cannot see them.
+>
+> If a run reports `DUPLICATE_VALUE`, run `python diagnose_duplicates.py`. It
+> classifies each failure and says whether the fix is **View All** on Contact,
+> emptying the Recycle Bin, or something else. Enabling **View All** (read) —
+> and **Modify All** if the records also need to be *written* by a user who
+> doesn't own them — is the intended remedy for that diagnosis.
 
 **Object Settings → Contacts → Edit:**
 
 - Object Permissions: ✅ **Read**, ✅ **Create**, ✅ **Edit**
-  (leave Delete / View All / Modify All off).
+  (Delete stays off. See the note above before deciding on View All /
+  Modify All — they are off by default, but are the fix if the diagnostic
+  reports `INVISIBLE` records.)
 - Field Permissions (Read + Edit):
 
   | Field | Read | Edit |
@@ -126,13 +146,19 @@ platform requirement alongside Create/Edit, so it stays checked.
   | `Membership_ID__c` | ✅ | ✅ |
   | `Chapter_Join_Date__c` | ✅ | ✅ |
   | `Chapter_Expiration__c` | ✅ | ✅ |
+  | `PMP_Status__c` | ✅ | ✅ |
+  | `PMP_Start_Date__c` | ✅ | ✅ |
+  | `PMP_Expiration__c` | ✅ | ✅ |
+  | `PMP_Original_Grant_Date__c` | ✅ | ✅ |
+  | `Certifications__c` | ✅ | ✅ |
   | `Email` (standard) | ✅ | ✅ |
   | `First Name` (standard) | ✅ | ✅ |
   | `Last Name` (standard) | ✅ | ✅ |
 
   (`FirstName`/`LastName` are written because a new Contact needs `LastName`;
   granting Edit here avoids `REQUIRED_FIELD_MISSING` / `INSUFFICIENT_ACCESS`
-  on insert.)
+  on insert. `Membership_ID__c` needs **Read** as well as Edit — without it the
+  resolve query returns the field as null and every member looks new.)
 
 **Save.**
 

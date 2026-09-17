@@ -10,7 +10,12 @@ matched on `Personid`.
   including the currency fix below. Dataset: "Chapter Membership Dataset v2
   with Cert Details" (`6aa8c1ff-32b7-41ab-b990-e92c05b04582`, pinned in
   `.env` as `TS_DATASET_ID`).
-- **Salesforce upsert: confirmed working against the sandbox.** Mapped as:
+- **Salesforce write: confirmed working against the sandbox.** Matching on
+  `Membership_ID__c` happens **client-side** — the sync resolves it to a
+  Contact Id with its own SOQL query, then updates by Id or inserts. It does
+  not use Salesforce's external-ID upsert endpoint, which silently failed to
+  match 209 of 2,463 records on a production run (see *Notes* and
+  `diagnose_duplicates.py`). Mapped as:
   - `Personid` → `Contact.Membership_ID__c` (external ID, used to match)
   - `Firstname` → `Contact.FirstName`
   - `Lastname` → `Contact.LastName` (required by Salesforce whenever the
@@ -93,8 +98,13 @@ pulls the authoritative live column list instead.
   kept around in case a similar "does this field mean what it sounds like"
   question comes up for a new field later.
 - `python test_sf_auth.py` — authenticates to Salesforce and runs a trivial
-  SOQL query, independent of the upsert logic. Run this before ever using
+  SOQL query, independent of the write logic. Run this before ever using
   `--push-salesforce`.
+- `python diagnose_duplicates.py [output/upsert_failures_<UTC>.csv]` —
+  read-only triage for `DUPLICATE_VALUE` failures. Says, per record, whether
+  the blocking Contact is visible, soft-deleted in the Recycle Bin, or hidden
+  from the integration user by sharing — which is the difference between a
+  code fix and a permissions fix. Defaults to the newest failure CSV.
 
 ## Notes
 
