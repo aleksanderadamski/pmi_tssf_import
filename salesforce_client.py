@@ -47,6 +47,11 @@ FIELD_MAP = {
     "Primaryemail": ("Email", None),
     "Startdateforterm": ("Chapter_Join_Date__c", to_salesforce_date),
     "Enddateforterm": ("Chapter_Expiration__c", to_salesforce_date),
+    "Pmppipelinestatus": ("PMP_Status__c", None),
+    "Pmpstartdate": ("PMP_Start_Date__c", to_salesforce_date),
+    "Pmpexpiredate": ("PMP_Expiration__c", to_salesforce_date),
+    "Pmporiginalgrantdate": ("PMP_Original_Grant_Date__c", to_salesforce_date),
+    "Certificationlist": ("Certifications__c", None),
 }
 
 

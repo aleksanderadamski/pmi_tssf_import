@@ -63,7 +63,7 @@ from thoughtspot_client import ThoughtSpotClient
 from date_utils import to_epoch_seconds, is_plausible_date_epoch
 
 # Plain field names, used as dict/CSV keys and for matching response columns.
-FIELDS = ["Personid", "Firstname", "Lastname", "Primaryemail", "Startdateforterm", "Enddateforterm"]
+FIELDS = ["Personid", "Firstname", "Lastname", "Primaryemail", "Startdateforterm", "Enddateforterm", "Pmppipelinestatus", "Pmpstartdate", "Pmpexpiredate", "Pmporiginalgrantdate", "Certificationlist"]
 ACTIVE_FIELD = "Isactive"
 
 # Date columns default to a MONTHLY bucket in ThoughtSpot search unless bound
@@ -77,6 +77,11 @@ QUERY_FIELDS = [
     "Startdateforterm|daily",
     "Enddateforterm|daily",
     ACTIVE_FIELD,
+    "Pmppipelinestatus",
+    "Pmpstartdate|daily",
+    "Pmpexpiredate|daily",
+    "Pmporiginalgrantdate|daily",
+    "Certificationlist",
 ]
 
 
@@ -143,7 +148,7 @@ def inspect(client: ThoughtSpotClient, dataset_id: str):
         print(f"Sample Startdateforterm raw value: {rows[0][date_idx]!r}")
 
 
-DATE_FIELDS = {"Startdateforterm", "Enddateforterm"}
+DATE_FIELDS = {"Startdateforterm", "Enddateforterm", "Pmpstartdate", "Pmpexpiredate", "Pmporiginalgrantdate"}
 
 
 def _write_csv(records: list[dict], path: str):
@@ -220,6 +225,11 @@ def dedupe_by_person(records: list[dict]) -> list[dict]:
             existing["Firstname"] = _first_non_null(existing["Firstname"], r["Firstname"])
             existing["Lastname"] = _first_non_null(existing["Lastname"], r["Lastname"])
             existing["Primaryemail"] = _first_non_null(existing["Primaryemail"], r["Primaryemail"])
+            existing["Pmppipelinestatus"] = _first_non_null(existing["Pmppipelinestatus"], r["Pmppipelinestatus"])
+            existing["Pmpstartdate"] = _max_ignore_none(existing["Pmpstartdate"], r["Pmpstartdate"])
+            existing["Pmpexpiredate"] = _max_ignore_none(existing["Pmpexpiredate"], r["Pmpexpiredate"])
+            existing["Pmporiginalgrantdate"] = _min_ignore_none(existing["Pmporiginalgrantdate"], r["Pmporiginalgrantdate"])
+            existing["Certificationlist"] = _first_non_null(existing["Certificationlist"], r["Certificationlist"])
     return list(by_person.values())
 
 
