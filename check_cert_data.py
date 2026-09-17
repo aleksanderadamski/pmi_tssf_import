@@ -16,7 +16,7 @@ cert_fields = [
 ]
 
 columns, rows = ts.search_data(dataset_id, cert_fields, record_size=5000)
-idx = {f.replace("|daily", ""): _column_index(columns, f) for f in cert_fields}
+idx = {f.replace("|daily", ""): _column_index(columns, f.replace("|daily", "")) for f in cert_fields}
 
 print(f"\n{len(rows)} total rows fetched\n")
 
