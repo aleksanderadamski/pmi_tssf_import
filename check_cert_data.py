@@ -16,7 +16,16 @@ cert_fields = [
 ]
 
 columns, rows = ts.search_data(dataset_id, cert_fields, record_size=5000)
+<<<<<<< Updated upstream
 idx = {f.replace("|daily", ""): _column_index(columns, f.replace("|daily", "")) for f in cert_fields}
+=======
+
+# Build index: remove |daily for column lookup
+idx = {}
+for f in cert_fields:
+    clean_field = f.replace("|daily", "")
+    idx[clean_field] = _column_index(columns, clean_field)
+>>>>>>> Stashed changes
 
 print(f"\n{len(rows)} total rows fetched\n")
 
@@ -29,7 +38,7 @@ for row in rows:
     pmp_status = row[idx["Pmppipelinestatus"]]
     pmp_start = row[idx["Pmpstartdate"]]
     cert_list = row[idx["Certificationlist"]]
-
+    
     if pmp_status or pmp_start:
         has_pmp.append((pid, pmp_status, pmp_start))
     if cert_list:
