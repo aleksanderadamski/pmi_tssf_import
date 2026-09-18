@@ -211,21 +211,29 @@ requirements.txt` then run anything) with the same secrets mechanism. Note that
 `github.dev` — pressing `.` on the repo — is an editor only and **cannot** run
 Python; it is not an option here.
 
-## 12. One member did not resolve to a Contact (TODO)
+## 12. One member did not resolve to a Contact — RESOLVED 2026-09-18
 
-`report_sentinel_dates.py` (2026-09-18) resolved 1,087 of 1,088 members; **1
-returned no Salesforce row**, so its field values are unknown and no report can
-claim full coverage until it is explained.
+`report_sentinel_dates.py` resolved 1,087 of 1,088 members and labelled the
+last one "NOT VISIBLE". That label is broader than it sounds — the SOQL simply
+returned nothing, which is equally true of a Contact hidden by record-level
+sharing (the cause of the 209 `DUPLICATE_VALUE` failures) and of a member with
+no Contact at all.
 
-The report labels this "NOT VISIBLE", but that label is broader than it sounds:
-the SOQL simply returned nothing for that `Membership_ID__c`, which is equally
-true for a Contact hidden by record-level sharing (the cause of the 209
-`DUPLICATE_VALUE` failures) **and** for a member who has no Contact at all —
-someone who joined since the last push, or one of those 209 that never got
-written. Don't open a permissions investigation before establishing which.
+Almost certainly the second: the full push reported `2463 updates, 1 inserts`
+and created one Contact. Because `Membership_ID__c` is a **unique** external id
+and that index is org-wide, an insert that *succeeded* proves no Contact held
+that id — visible, hidden, or in the Recycle Bin. So for the inserted member the
+sharing-visibility explanation is ruled out outright.
 
-Identify it first (`diagnose_duplicates.py` distinguishes the cases), then
-either fix the sharing grant or let the next push create the Contact.
+What is not strictly proven is that the inserted member *is* the one the report
+couldn't resolve: the two runs cover different populations (1,088 members with
+≥1 omitted field vs. 2,464 currently active) and neither Personid was recorded.
+"Exactly one in each" is strong circumstantial evidence, not identity.
+
+Confirm cheaply next run: `verify_push.py` now fails on any submitted member
+with no Contact, so a clean pass closes this properly. A re-run of
+`report_sentinel_dates.py` reporting 1,088 resolved / 0 unresolved does the
+same.
 
 ## 13. `_min_ignore_none()` let a sentinel beat a real date — FIXED 2026-09-18
 
