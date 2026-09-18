@@ -21,11 +21,21 @@ It reports, in order:
      sync writes; raw per-term rows matter because dedupe_by_person collapses
      Pmpexpiredate with MAX, and the sentinel is numerically smaller than any
      real epoch — so a member with one sentinel row and one real row is deduped
-     to the real date and would vanish from a post-dedupe-only count.
+     to the real date and would vanish from a post-dedupe-only count. Note the
+     MIN merges (Startdateforterm, Pmporiginalgrantdate) do the OPPOSITE: the
+     sentinel wins and discards the real date. That is a live bug — see
+     NEXT_STEPS §13.
   2. The distinct raw values behind every "would be omitted" bucket, so
      "is the sentinel really -2208988800?" is answered from data, not memory.
-  3. What a sentinel expiry co-occurs with, to distinguish "this member's PMP
-     never expires" from "this member has no PMP at all".
+  3. What a sentinel expiry co-occurs with, and what the co-occurring values
+     actually ARE. Measured 2026-09-18: the sentinel lands on all three PMP
+     date fields at once, which rules out "this credential never expires" (a
+     non-expiring cert would still have a grant date). The remaining reading is
+     "no dates recorded", but confirming it needs more than a non-empty check —
+     a *pipeline* status may mean "In Progress", and a certification list may
+     hold only CAPM/ACP. So this section also prints the distinct status
+     values, whether PMP is actually in the list, and how many distinct PEOPLE
+     are behind the row count.
   4. The number that decides the question: Contacts where the source would omit
      a field but Salesforce currently holds a value — checked for EVERY mapped
      field, not just the expiry, because omit-empties applies to all of them.
@@ -118,8 +128,12 @@ def main():
                   f"{c['omitted']:>8} {c['empty']:>8}")
     print("\n  'omitted' = a non-empty source value that still reaches Salesforce as")
     print("  'skip this field' (the sentinel, or anything unparseable).")
-    print("  If raw-row 'omitted' is high but per-member is 0, dedupe's MAX is")
-    print("  masking sentinels behind a real date — expected, and harmless.")
+    print("  Raw-row 'omitted' high but per-member 0 has TWO explanations: dedupe's")
+    print("  MAX masked the sentinel behind a real date, OR those members were")
+    print("  dropped by the currency filter. This report cannot tell them apart.")
+    print("  And for Pmporiginalgrantdate dedupe uses MIN, where the sentinel WINS")
+    print("  and discards the real date — a per-member non-zero there is the bug in")
+    print("  NEXT_STEPS §13, not an anomaly in the source.")
 
     # --- 2. The actual raw values behind 'omitted' ---------------------------
     print("\n### 2. Distinct raw values that get omitted (is it really the sentinel?)\n")
@@ -160,8 +174,10 @@ def main():
     print(f"\n### 3. What a sentinel PMP expiry co-occurs with "
           f"({len(sentinel_rows)} raw rows)\n")
     if not sentinel_rows:
-        print("  No row carries a sentinel PMP expiry. The 'no expiry' case does not\n"
-              "  occur in this dataset.")
+        print("  No row carries a sentinel PMP expiry in this pull — so nothing here\n"
+              "  constrains what the sentinel means. (It was present on 9 rows as of\n"
+              "  2026-09-18; absence now means the source changed, not that the\n"
+              "  question is closed.)")
     else:
         combos = Counter()
         for r in sentinel_rows:
@@ -172,9 +188,31 @@ def main():
             )] += 1
         for (a, b, c), n in combos.most_common():
             print(f"  {n:>6}  {a:<10} {b:<9} {c}")
-        print("\n  Mostly 'no status / no start / no certs' means the sentinel marks")
-        print("  'this member has no PMP', NOT 'their PMP never expires' — in which")
-        print("  case there is nothing to fix and the omit rule is simply correct.")
+        people = {r["Personid"] for r in sentinel_rows}
+        print(f"\n  Those {len(sentinel_rows)} rows are {len(people)} distinct person(s) "
+              f"— the dataset is (person, term) grain, so rows overstate people.")
+
+        print("\n  Distinct Pmppipelinestatus values on those rows:")
+        for v, n in Counter(r.get("Pmppipelinestatus") for r in sentinel_rows).most_common():
+            print(f"      {v!r} x{n}")
+        print("  (a *pipeline* status like 'In Progress' would mean the member does NOT")
+        print("   hold the credential — which changes what the sentinel means.)")
+
+        print("\n  Does Certificationlist actually contain PMP?")
+        pmp = Counter(
+            "PMP present" if "PMP" in str(r.get("Certificationlist") or "").upper()
+            else "no PMP in list"
+            for r in sentinel_rows
+        )
+        for v, n in pmp.most_common():
+            print(f"      {v}: {n}")
+        print("  (a list holding only CAPM/PMI-ACP scores as 'certs' above but does not")
+        print("   evidence a PMP.)")
+
+        print("\n  Reading it: all three PMP dates carrying the sentinel together rules")
+        print("  out 'never expires' — a non-expiring cert would still have a grant")
+        print("  date. Whether the rest reads as 'no dates recorded' depends on the two")
+        print("  checks above. Omitting is correct either way: never write a placeholder.")
 
     # --- 4. The number that decides it ---------------------------------------
     print("\n### 4. Contacts where Salesforce holds a value the source would omit\n")

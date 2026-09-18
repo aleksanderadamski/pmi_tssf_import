@@ -166,6 +166,97 @@ Slack/Teams webhook.** When building the Actions workflow:
   `FAILURE_WEBHOOK_URL`; pass it into the job's env so `reporting.notify_failures`
   posts a summary the moment a partial failure happens.
 
+## 11. Run from the cloud instead of per-machine (TODO)
+
+Motivation: the project is now worked on from **two computers**. Git syncs the
+code, but never `.env`, never the `.pem`, and never the installed packages — so
+each machine needs its own setup and the two drift. Moving execution to GitHub
+removes that entirely: secrets live in one place and any browser can trigger a
+run.
+
+Already true, so this is less work than it looks:
+- `salesforce_client._load_private_key` reads `SF_PRIVATE_KEY` (the PEM
+  *contents*) when no file is available — built precisely for cloud runners.
+- `reporting.py` already drives a non-zero exit, a failure CSV, and an optional
+  webhook (see §10 above).
+
+Do it in this order — read-only first, so a secrets mistake cannot touch
+Salesforce data:
+
+1. **Add repo secrets** (Settings → Secrets and variables → Actions), one per
+   `.env` key: `TS_HOST`, `TS_USERNAME`, `TS_PASSWORD`, `TS_ORG_ID`,
+   `TS_DATASET_NAME`, `TS_DATASET_ID`, `TS_ACTIVE_FLAG_VALUE`, `SF_CLIENT_ID`,
+   `SF_USERNAME`, `SF_LOGIN_URL`, `SF_API_VERSION`, and `SF_PRIVATE_KEY` (paste
+   the whole PEM, `BEGIN`/`END` lines included — **not** `SF_PRIVATE_KEY_FILE`,
+   since no file ships to a runner). `FAILURE_WEBHOOK_URL` too if §10's
+   alerting is wanted.
+2. **Manual-trigger workflow** (`on: workflow_dispatch`) running only the
+   read-only scripts: `test_sf_auth.py`, then `report_sentinel_dates.py`. This
+   proves the secrets work with zero risk to Salesforce data.
+
+   **Upload `output/sentinel_conflicts_*.csv` only — never `output/*.csv`.**
+   That glob would sweep in `members.csv`, which the report always refreshes:
+   ~2,464 members' names, emails and PMI ids, uploaded as an artifact anyone
+   with repo read access can download, retained 90 days by default. `output/`
+   is gitignored precisely to keep that data off GitHub; a wildcard artifact
+   path quietly undoes it. Set an explicit short `retention-days` too.
+3. **Then** the scheduled `--push-salesforce` job from §10, reusing the same
+   secrets, plus `diagnose_duplicates.py` — it needs an
+   `output/upsert_failures_*.csv` to read and exits immediately on a fresh
+   runner, so it only becomes useful once a push has run.
+
+Alternative if an interactive shell is wanted rather than a button:
+**Codespaces** runs a full Linux VM in the browser (`pip install -r
+requirements.txt` then run anything) with the same secrets mechanism. Note that
+`github.dev` — pressing `.` on the repo — is an editor only and **cannot** run
+Python; it is not an option here.
+
+## 12. One member did not resolve to a Contact (TODO)
+
+`report_sentinel_dates.py` (2026-09-18) resolved 1,087 of 1,088 members; **1
+returned no Salesforce row**, so its field values are unknown and no report can
+claim full coverage until it is explained.
+
+The report labels this "NOT VISIBLE", but that label is broader than it sounds:
+the SOQL simply returned nothing for that `Membership_ID__c`, which is equally
+true for a Contact hidden by record-level sharing (the cause of the 209
+`DUPLICATE_VALUE` failures) **and** for a member who has no Contact at all —
+someone who joined since the last push, or one of those 209 that never got
+written. Don't open a permissions investigation before establishing which.
+
+Identify it first (`diagnose_duplicates.py` distinguishes the cases), then
+either fix the sharing grant or let the next push create the Contact.
+
+## 13. `_min_ignore_none()` lets a sentinel beat a real date (TODO — real bug)
+
+Found during the 2026-09-18 review, **not yet fixed** because it changes what
+gets written to production Salesforce and should be a deliberate decision.
+
+`-2208988800` is smaller than every plausible epoch, so in `dedupe_by_person()`
+(`fetch_members.py:219` and `:231`) the two MIN merges pick the **sentinel** over
+a real value:
+
+```python
+_min_ignore_none(-2208988800, 1546300800)  ->  -2208988800   # sentinel wins
+_max_ignore_none(-2208988800, 1546300800)  ->   1546300800   # real date wins
+```
+
+Affected: `Startdateforterm` → `Chapter_Join_Date__c`, and
+`Pmporiginalgrantdate` → `PMP_Original_Grant_Date__c`. A member with one
+sentinel term row and one real row is deduped to the sentinel, the true date is
+discarded, and since empties are omitted the field is then never written —
+permanently. The MAX merges (`Enddateforterm`, `Pmpstartdate`, `Pmpexpiredate`)
+are unaffected.
+
+This has not bitten yet only because the 9 sentinel rows belong to members the
+currency filter drops. That is luck, not design.
+
+Note this already violates the rule in CLAUDE.md that *any raw-epoch comparison
+must gate on `is_plausible_date_epoch()`* — `_min_ignore_none` and
+`_max_ignore_none` don't. Fix: gate both helpers so a sentinel is treated like
+`None` (ignored) rather than as an extreme value. Verify with a member carrying
+one sentinel row and one real row, and re-run `report_sentinel_dates.py`.
+
 ## Reminder: certification fields (later effort)
 
 When the certification sync is built (full plan in `TAKEOVER.md` → "certification

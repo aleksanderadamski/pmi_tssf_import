@@ -82,7 +82,9 @@ with `investigate_certifications.py`. Key findings:
   Generic per-cert fields come back NULL at person grain (cert-grain query, a
   later separate effort).
 - Cert dates are epoch seconds; some carry the `1900-01-01` sentinel
-  (`-2208988800`) = "no expiry" → `date_utils.to_salesforce_date` maps to `None`.
+  (`-2208988800`) = **"date not recorded"** (measured: those rows still have a
+  PMP status and certification list, so the credential exists and only its
+  dates are missing) → `date_utils.to_salesforce_date` maps to `None`.
 
 **Do these in order:**
 1. **Create the Salesforce Contact fields FIRST** (sandbox → prod, separate orgs)
