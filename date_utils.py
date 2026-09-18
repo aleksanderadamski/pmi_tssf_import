@@ -9,8 +9,8 @@ alternate string formats and passing anything unrecognized through as-is —
 so a format that doesn't fit shows up as a visible error downstream instead
 of failing silently.
 
-Sentinel/out-of-range epochs (e.g. 1900-01-01 = -2208988800, used in the
-source for "no expiry") convert to None rather than a bogus Salesforce date,
+Sentinel/out-of-range epochs (e.g. 1900-01-01 = -2208988800, the source's
+"date not recorded" placeholder) convert to None rather than a bogus date,
 and the conversion avoids datetime.fromtimestamp() so it can't raise OSError
 on Windows for negative/far-future values.
 """
@@ -20,10 +20,12 @@ _STRING_FORMATS = ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%m/%d/%Y")
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 # Plausible window for a real membership/certification date. Values outside it
-# are source-system sentinels (confirmed: epoch -2208988800 = 1900-01-01 is used
-# for "no expiry" on some PMP records) or garbage — treated as "no date" rather
-# than pushed to Salesforce. Also avoids datetime.fromtimestamp(), which raises
-# OSError on Windows for negative / far-future epochs.
+# are source-system sentinels (epoch -2208988800 = 1900-01-01; all three PMP
+# date fields carry it together, so it reads as "no dates recorded" rather than
+# "no expiry" — see the CLAUDE.md gotcha) or garbage. Either way they become
+# "no date" rather than being pushed to Salesforce. Also avoids
+# datetime.fromtimestamp(), which raises OSError on Windows for negative /
+# far-future epochs.
 _MIN_EPOCH = 0            # 1970-01-01
 _MAX_EPOCH = 7258118400   # ~2200-01-01
 
@@ -70,5 +72,5 @@ def to_salesforce_date(value):
     if epoch in (None, "") or isinstance(epoch, bool) or not isinstance(epoch, int):
         return epoch
     if epoch < _MIN_EPOCH or epoch > _MAX_EPOCH:
-        return None  # sentinel (e.g. 1900-01-01 "no expiry") / out-of-range
+        return None  # sentinel (1900-01-01 = "date not recorded") / out-of-range
     return (_EPOCH + timedelta(seconds=epoch)).date().isoformat()

@@ -82,7 +82,9 @@ with `investigate_certifications.py`. Key findings:
   Generic per-cert fields come back NULL at person grain (cert-grain query, a
   later separate effort).
 - Cert dates are epoch seconds; some carry the `1900-01-01` sentinel
-  (`-2208988800`) = "no expiry" → `date_utils.to_salesforce_date` maps to `None`.
+  (`-2208988800`) = **"date not recorded"** (measured: those rows still have a
+  PMP status and certification list, so the credential exists and only its
+  dates are missing) → `date_utils.to_salesforce_date` maps to `None`.
 
 **Do these in order:**
 1. **Create the Salesforce Contact fields FIRST** (sandbox → prod, separate orgs)
@@ -100,8 +102,15 @@ with `investigate_certifications.py`. Key findings:
    - `fetch_members.py`: add the 5 source columns to `FIELDS` and `QUERY_FIELDS`
      (the 3 PMP **date** columns need the `|daily` binding; `Pmppipelinestatus`
      and `Certificationlist` are plain); add the 3 PMP dates to `DATE_FIELDS`;
-     carry all 5 **first-non-null** in `dedupe_by_person()` (person-stable, like
-     `Firstname`/`Primaryemail` — NOT min/max like the term dates).
+     carry all 5 in `dedupe_by_person()`.
+
+     > **Superseded by what was implemented.** This line planned first-non-null
+     > for all 5. The built code uses first-non-null only for the two text
+     > fields (`Pmppipelinestatus`, `Certificationlist`); the 3 PMP dates use
+     > the same date merges as the term dates — `_latest_date` for
+     > `Pmpstartdate`/`Pmpexpiredate`, `_earliest_date` for
+     > `Pmporiginalgrantdate` (an *original* grant is the earliest, not
+     > whichever row came first). See `fetch_members.dedupe_by_person`.
    - `salesforce_client.py` `FIELD_MAP`: add 5 entries —
      `Pmppipelinestatus→("PMP_Status__c", None)`,
      `Pmpstartdate→("PMP_Start_Date__c", to_salesforce_date)`,

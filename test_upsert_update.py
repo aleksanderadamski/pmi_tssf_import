@@ -10,9 +10,16 @@ Data comes from the real ThoughtSpot active pull:
     '_test' suffix, and Chapter_Join_Date__c is set to 2000-01-01.
   - INSERT set = 5 active records whose PMI ID is not yet in Salesforce.
 
-Proof of matching: Salesforce's composite-upsert response returns `created`
-per record — False = matched/updated, True = inserted. The update set must all
-come back created=False, the insert set all created=True.
+Proof of matching: step 6's re-query. It counts the Contacts that actually
+exist per PMI ID afterwards, so a matching failure shows up as a duplicate
+Contact — independent of anything the write path reports about itself.
+
+Note the `created` check in step 5 is now weaker than it looks. Matching moved
+client-side (see salesforce_client), so `created` is synthesized from the pass
+each record took rather than reported by Salesforce, and it is derived from the
+same `Membership_ID__c` resolve the test's own `existing_ids` comes from. It
+therefore can no longer fail the way it was originally written to catch. Keep
+it as a consistency check; treat step 6 as the real assertion.
 
 Run: python test_upsert_update.py
 """
