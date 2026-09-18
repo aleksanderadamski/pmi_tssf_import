@@ -10,6 +10,13 @@ Field mapping (ThoughtSpot -> Salesforce Contact):
   Primaryemail      -> Email             (standard Contact field)
   Startdateforterm  -> Chapter_Join_Date__c
   Enddateforterm    -> Chapter_Expiration__c
+  Pmppipelinestatus     -> PMP_Status__c
+  Pmpstartdate          -> PMP_Start_Date__c
+  Pmpexpiredate         -> PMP_Expiration__c
+  Pmporiginalgrantdate  -> PMP_Original_Grant_Date__c
+  Certificationlist     -> Certifications__c
+
+FIELD_MAP below is the authoritative copy of that mapping.
 
 Writes in two passes, 200 records per call per Salesforce's limit:
 
@@ -30,6 +37,17 @@ Note that step 1 runs under the integration user's sharing rules, just as the
 old endpoint's internal lookup did. If a Contact is hidden from that user, it
 is missing here too and the insert still collides — that failure mode is a
 permissions fix, not a code one, and the diagnostic identifies it.
+
+This module never deletes. It only ever adds or updates:
+
+  - WRITE_METHODS pins the HTTP method to PATCH/POST, so no delete call can be
+    issued even by mistake. The integration user needs Modify All on Contact to
+    write records it doesn't own, and that grant carries delete rights with it.
+  - A field that is empty in ThoughtSpot is OMITTED from the payload rather
+    than sent as null, so the sync cannot blank a value someone entered in the
+    Salesforce UI. The tradeoff is that a value which legitimately disappears
+    upstream (a lapsed certification) goes stale in Salesforce rather than
+    being cleared — clearing is a deliberate manual act.
 
 Setup required before this works:
   1. In Salesforce Setup, create a Connected App with a digital certificate
@@ -56,6 +74,16 @@ EXTERNAL_ID_FIELD = "Membership_ID__c"
 CHUNK_SIZE = 200  # SObject Collections limit per call
 QUERY_CHUNK_SIZE = 200  # ids per SOQL IN(...) clause, to keep the GET URL short
 HTTP_TIMEOUT = 120  # seconds; a 200-record write is slow but must not hang forever
+
+# The only HTTP methods this module may use against /composite/sobjects.
+# The integration user holds Modify All on Contact (needed to update records it
+# does not own), which also carries delete rights — so "this sync never deletes"
+# is enforced here rather than left to code review. Salesforce deletes via
+# DELETE /composite/sobjects?ids=... ; adding "DELETE" here is the only thing
+# IN THIS MODULE that could make that reachable. Don't. The guard binds the
+# method inside _write_collection, so it cannot police a future requests.* call
+# that bypasses the helper — route every Contact write through it.
+WRITE_METHODS = frozenset({"PATCH", "POST"})
 
 # ts_field -> (sf_field, optional transform applied to the raw TS value)
 FIELD_MAP = {
@@ -253,6 +281,11 @@ class SalesforceClient:
         pass each record went through, so we set it here: callers (and
         test_upsert_update.py) still get insert-vs-update per record.
         """
+        if method not in WRITE_METHODS:
+            raise ValueError(
+                f"Refusing to issue {method!r} against Contact records. This "
+                f"sync only ever updates or inserts; see WRITE_METHODS."
+            )
         if not indexed_payloads:
             return
         headers = self._headers()
@@ -300,6 +333,20 @@ class SalesforceClient:
         updates, inserts = [], []
         for i, r in enumerate(records):
             key = external_id_key(r["Personid"])
+            if not key:
+                # Without an external id an insert would create a Contact with a
+                # null Membership_ID__c that nothing can ever match — so the next
+                # run inserts another one, and so on. Refuse instead.
+                results[i] = {
+                    "success": False,
+                    "errors": [{
+                        "statusCode": "MISSING_EXTERNAL_ID",
+                        "message": "record has no Personid; refusing to write a "
+                                   "Contact with no Membership_ID__c",
+                    }],
+                }
+                continue
+
             if key in ambiguous:
                 # More than one Contact answers to this id. Writing to either
                 # could overwrite the wrong person, so report instead of guess.
@@ -316,9 +363,20 @@ class SalesforceClient:
 
             payload = {"attributes": {"type": "Contact"}}
             for ts_field, (sf_field, transform) in FIELD_MAP.items():
-                if ts_field in r:
-                    value = r[ts_field]
-                    payload[sf_field] = transform(value) if transform else value
+                if ts_field not in r:
+                    continue
+                value = r[ts_field]
+                if transform:
+                    value = transform(value)
+                # Omit empties instead of sending an explicit null. A null would
+                # blank whatever Salesforce holds, and with Modify All this runs
+                # against Contacts the chapter maintains by hand. Whitespace-only
+                # counts as empty because Salesforce trims text on save, so " "
+                # would blank the field just as effectively as null. Tested by
+                # type rather than falsiness, so a legitimate 0 or False writes.
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    continue
+                payload[sf_field] = value
 
             contact_id = existing.get(key)
             if contact_id:

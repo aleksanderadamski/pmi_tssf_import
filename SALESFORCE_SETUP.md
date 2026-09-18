@@ -139,6 +139,25 @@ updated or mistaken for a new one.
   (Delete stays off. See the note above before deciding on View All /
   Modify All — they are off by default, but are the fix if the diagnostic
   reports `INVISIBLE` records.)
+
+  > **On granting Modify All.** It is the standard remedy for `INVISIBLE`
+  > records, but it also confers **delete** on every Contact in the org.
+  >
+  > The sync itself cannot delete: `salesforce_client.WRITE_METHODS` pins the
+  > `/composite/sobjects` call to `PATCH`/`POST`, so no delete request can be
+  > issued. Empty values are omitted from the payload rather than sent as
+  > `null`, so it also will not blank a field that someone filled in by hand.
+  >
+  > Two honest limits on that assurance. The method guard lives inside
+  > `_write_collection`; it cannot police a future code path that calls
+  > `requests` directly, so route every Contact write through that helper. And
+  > the guard constrains *this* sync only — the permission itself is held by
+  > the integration user, so anything else authenticating as that user would
+  > carry delete rights too.
+  >
+  > The narrower alternative is a criteria-based sharing rule granting the
+  > integration user's public group Read/Write on Contacts. It fixes the same
+  > visibility problem without ever granting delete.
 - Field Permissions (Read + Edit):
 
   | Field | Read | Edit |
