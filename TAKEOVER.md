@@ -102,8 +102,15 @@ with `investigate_certifications.py`. Key findings:
    - `fetch_members.py`: add the 5 source columns to `FIELDS` and `QUERY_FIELDS`
      (the 3 PMP **date** columns need the `|daily` binding; `Pmppipelinestatus`
      and `Certificationlist` are plain); add the 3 PMP dates to `DATE_FIELDS`;
-     carry all 5 **first-non-null** in `dedupe_by_person()` (person-stable, like
-     `Firstname`/`Primaryemail` — NOT min/max like the term dates).
+     carry all 5 in `dedupe_by_person()`.
+
+     > **Superseded by what was implemented.** This line planned first-non-null
+     > for all 5. The built code uses first-non-null only for the two text
+     > fields (`Pmppipelinestatus`, `Certificationlist`); the 3 PMP dates use
+     > the same date merges as the term dates — `_latest_date` for
+     > `Pmpstartdate`/`Pmpexpiredate`, `_earliest_date` for
+     > `Pmporiginalgrantdate` (an *original* grant is the earliest, not
+     > whichever row came first). See `fetch_members.dedupe_by_person`.
    - `salesforce_client.py` `FIELD_MAP`: add 5 entries —
      `Pmppipelinestatus→("PMP_Status__c", None)`,
      `Pmpstartdate→("PMP_Start_Date__c", to_salesforce_date)`,

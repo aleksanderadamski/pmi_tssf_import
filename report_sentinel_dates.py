@@ -21,10 +21,10 @@ It reports, in order:
      sync writes; raw per-term rows matter because dedupe_by_person collapses
      Pmpexpiredate with MAX, and the sentinel is numerically smaller than any
      real epoch — so a member with one sentinel row and one real row is deduped
-     to the real date and would vanish from a post-dedupe-only count. Note the
-     MIN merges (Startdateforterm, Pmporiginalgrantdate) do the OPPOSITE: the
-     sentinel wins and discards the real date. That is a live bug — see
-     NEXT_STEPS §13.
+     to the real date and would vanish from a post-dedupe-only count. (Until
+     2026-09-18 the MIN merges did the opposite — the sentinel beat a real date
+     and discarded it. Fixed; both merges now ignore sentinels outright. See
+     NEXT_STEPS §13.)
   2. The distinct raw values behind every "would be omitted" bucket, so
      "is the sentinel really -2208988800?" is answered from data, not memory.
   3. What a sentinel expiry co-occurs with, and what the co-occurring values
@@ -128,12 +128,13 @@ def main():
                   f"{c['omitted']:>8} {c['empty']:>8}")
     print("\n  'omitted' = a non-empty source value that still reaches Salesforce as")
     print("  'skip this field' (the sentinel, or anything unparseable).")
-    print("  Raw-row 'omitted' high but per-member 0 has TWO explanations: dedupe's")
-    print("  MAX masked the sentinel behind a real date, OR those members were")
-    print("  dropped by the currency filter. This report cannot tell them apart.")
-    print("  And for Pmporiginalgrantdate dedupe uses MIN, where the sentinel WINS")
-    print("  and discards the real date — a per-member non-zero there is the bug in")
-    print("  NEXT_STEPS §13, not an anomaly in the source.")
+    print("  Raw-row 'omitted' high but per-member 0 has TWO explanations: the merge")
+    print("  kept a real date over the sentinel, OR those members were dropped by the")
+    print("  currency filter. This report cannot tell them apart.")
+    print("  A per-member non-zero is a SOURCE fact, not a code bug: it means every")
+    print("  row that member has carries the sentinel. (Until 2026-09-18 the MIN")
+    print("  merges could also manufacture one by letting a sentinel beat a real")
+    print("  date — fixed, see NEXT_STEPS §13.)")
 
     # --- 2. The actual raw values behind 'omitted' ---------------------------
     print("\n### 2. Distinct raw values that get omitted (is it really the sentinel?)\n")

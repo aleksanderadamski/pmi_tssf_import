@@ -22,8 +22,10 @@ Modes:
                                               a sandbox before running this
                                               against production.
 
-Fields pulled: Personid, Firstname, Lastname, Primaryemail, Startdateforterm,
-Enddateforterm.
+Fields pulled: see FIELDS below — the membership columns (Personid, Firstname,
+Lastname, Primaryemail, Startdateforterm, Enddateforterm) plus the PMP /
+certification columns (Pmppipelinestatus, Pmpstartdate, Pmpexpiredate,
+Pmporiginalgrantdate, Certificationlist).
 Firstname/Lastname are needed because Salesforce requires Contact.LastName on
 insert — when a Personid has no existing matching Contact, the upsert creates
 one, and a bare record with no name fails REQUIRED_FIELD_MISSING. Add more
@@ -31,8 +33,8 @@ names to FIELDS as scope grows — they must match the ThoughtSpot column names
 exactly (see the Data Mapping sheet, column B), and salesforce_client.FIELD_MAP
 needs a matching entry for anything that should reach Salesforce.
 
-Startdateforterm/Enddateforterm are normalized to plain epoch-seconds ints
-in the output (see date_utils.to_epoch_seconds) regardless of whatever raw
+All five date columns (see DATE_FIELDS) are normalized to plain epoch-seconds
+ints in the output (see date_utils.to_epoch_seconds) regardless of whatever raw
 shape ThoughtSpot returns, so the export format is stable even if that
 changes.
 
@@ -180,7 +182,25 @@ WRITERS = {"csv": (_write_csv, "members.csv"),
            "xlsx": (_write_xlsx, "members.xlsx")}
 
 
-def _min_ignore_none(a, b):
+def _real_date_or_none(value):
+    """A raw epoch if it's a genuine date, else None.
+
+    Gating the merges below on this is not tidiness. The source's sentinel is
+    -2208988800 (1900-01-01), which is SMALLER than every plausible epoch — so
+    a bare min() treats it as the earliest date and picks it over a real one,
+    silently discarding the true value. Sentinels must drop out of the
+    comparison entirely, exactly as None does.
+
+    Side effect worth knowing: this also drops a value to_epoch_seconds()
+    couldn't parse (it passes unrecognized formats through as-is). Such a value
+    was already dropped downstream by filter_currently_active(), so a source
+    format change still surfaces as "0 currently active" rather than a crash.
+    """
+    return value if is_plausible_date_epoch(value) else None
+
+
+def _earliest_date(a, b):
+    a, b = _real_date_or_none(a), _real_date_or_none(b)
     if a is None:
         return b
     if b is None:
@@ -188,7 +208,8 @@ def _min_ignore_none(a, b):
     return min(a, b)
 
 
-def _max_ignore_none(a, b):
+def _latest_date(a, b):
+    a, b = _real_date_or_none(a), _real_date_or_none(b)
     if a is None:
         return b
     if b is None:
@@ -204,10 +225,19 @@ def dedupe_by_person(records: list[dict]) -> list[dict]:
     """One row per Personid: Startdateforterm = MIN across their term rows
     (original join date), Enddateforterm = MAX (current term's expiration).
     Some term rows have a null date (e.g. an open-ended current term with
-    no Enddateforterm yet) — those are ignored rather than treated as
-    "smaller"/"larger" than a real date. Firstname/Lastname should be
-    constant per person, but if a row happens to have one missing, prefer
-    whichever row actually has a value.
+    no Enddateforterm yet), and some carry the source's sentinel — both are
+    ignored rather than treated as "smaller"/"larger" than a real date (see
+    _real_date_or_none). Firstname/Lastname should be constant per person, but
+    if a row happens to have one missing, prefer whichever row actually has a
+    value.
+
+    Note a person's FIRST row is copied verbatim and only merged from the
+    second onward, so a single-row person keeps whatever raw value they had —
+    including a sentinel. Harmless for the sync (to_salesforce_date maps it to
+    None and salesforce_client omits it) and for filter_currently_active (which
+    gates on is_plausible_date_epoch), but it does mean output/members.csv can
+    show a raw -2208988800 for such a person where the Salesforce payload sent
+    nothing.
     """
     by_person: dict = {}
     for r in records:
@@ -216,19 +246,19 @@ def dedupe_by_person(records: list[dict]) -> list[dict]:
             by_person[pid] = dict(r)
         else:
             existing = by_person[pid]
-            existing["Startdateforterm"] = _min_ignore_none(
+            existing["Startdateforterm"] = _earliest_date(
                 existing["Startdateforterm"], r["Startdateforterm"]
             )
-            existing["Enddateforterm"] = _max_ignore_none(
+            existing["Enddateforterm"] = _latest_date(
                 existing["Enddateforterm"], r["Enddateforterm"]
             )
             existing["Firstname"] = _first_non_null(existing["Firstname"], r["Firstname"])
             existing["Lastname"] = _first_non_null(existing["Lastname"], r["Lastname"])
             existing["Primaryemail"] = _first_non_null(existing["Primaryemail"], r["Primaryemail"])
             existing["Pmppipelinestatus"] = _first_non_null(existing["Pmppipelinestatus"], r["Pmppipelinestatus"])
-            existing["Pmpstartdate"] = _max_ignore_none(existing["Pmpstartdate"], r["Pmpstartdate"])
-            existing["Pmpexpiredate"] = _max_ignore_none(existing["Pmpexpiredate"], r["Pmpexpiredate"])
-            existing["Pmporiginalgrantdate"] = _min_ignore_none(existing["Pmporiginalgrantdate"], r["Pmporiginalgrantdate"])
+            existing["Pmpstartdate"] = _latest_date(existing["Pmpstartdate"], r["Pmpstartdate"])
+            existing["Pmpexpiredate"] = _latest_date(existing["Pmpexpiredate"], r["Pmpexpiredate"])
+            existing["Pmporiginalgrantdate"] = _earliest_date(existing["Pmporiginalgrantdate"], r["Pmporiginalgrantdate"])
             existing["Certificationlist"] = _first_non_null(existing["Certificationlist"], r["Certificationlist"])
     return list(by_person.values())
 

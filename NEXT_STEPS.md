@@ -227,10 +227,18 @@ written. Don't open a permissions investigation before establishing which.
 Identify it first (`diagnose_duplicates.py` distinguishes the cases), then
 either fix the sharing grant or let the next push create the Contact.
 
-## 13. `_min_ignore_none()` lets a sentinel beat a real date (TODO — real bug)
+## 13. `_min_ignore_none()` let a sentinel beat a real date — FIXED 2026-09-18
 
-Found during the 2026-09-18 review, **not yet fixed** because it changes what
-gets written to production Salesforce and should be a deliberate decision.
+Found during the 2026-09-18 review. **Fixed the same day**; kept here as the
+record of what was wrong and what to re-check if dedupe is ever touched.
+
+Fix: `_min_ignore_none`/`_max_ignore_none` became `_earliest_date`/
+`_latest_date`, both routing each operand through `_real_date_or_none()` so a
+sentinel drops out of the comparison exactly as `None` does. Verified: a member
+with one sentinel row and one real row now keeps the real date in both field
+orders, and a normal multi-term member still gets earliest-join / latest-expiry.
+
+The original problem, for context:
 
 `-2208988800` is smaller than every plausible epoch, so in `dedupe_by_person()`
 (`fetch_members.py:219` and `:231`) the two MIN merges pick the **sentinel** over
@@ -248,14 +256,20 @@ discarded, and since empties are omitted the field is then never written —
 permanently. The MAX merges (`Enddateforterm`, `Pmpstartdate`, `Pmpexpiredate`)
 are unaffected.
 
-This has not bitten yet only because the 9 sentinel rows belong to members the
-currency filter drops. That is luck, not design.
+It had not bitten yet only because the 9 sentinel rows belong to members the
+currency filter drops. That was luck, not design — and it violated the rule in
+CLAUDE.md that *any raw-epoch comparison must gate on
+`is_plausible_date_epoch()`*.
 
-Note this already violates the rule in CLAUDE.md that *any raw-epoch comparison
-must gate on `is_plausible_date_epoch()`* — `_min_ignore_none` and
-`_max_ignore_none` don't. Fix: gate both helpers so a sentinel is treated like
-`None` (ignored) rather than as an extreme value. Verify with a member carrying
-one sentinel row and one real row, and re-run `report_sentinel_dates.py`.
+**Expect no observable change from this fix against today's data** — the only
+sentinel-carrying members are ones the currency filter drops, so they never
+reach a push at all. The fix matters for the future: *if* a currently-active
+member ever carries a sentinel row alongside a real one, the dedupe now keeps
+the real date and the next push writes it, instead of silently discarding it.
+
+Re-check with `report_sentinel_dates.py` §1 whenever the source changes: a
+per-member `omitted` count above zero is now a source fact (every row that
+member has is sentinel), no longer something the merge could manufacture.
 
 ## Reminder: certification fields (later effort)
 
