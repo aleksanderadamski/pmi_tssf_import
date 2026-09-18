@@ -100,6 +100,16 @@ pulls the authoritative live column list instead.
 - `python test_sf_auth.py` — authenticates to Salesforce and runs a trivial
   SOQL query, independent of the write logic. Run this before ever using
   `--push-salesforce`.
+- `python verify_push.py` — read-only verification that a completed push
+  actually landed. A clean `Wrote N/N` only means Salesforce *accepted* the
+  writes. This compares every value the push would have sent against the
+  Contact it resolves to, and fails on a mismatch, on a submitted member with
+  no Contact, or on one matching more than one Contact. It also scans all
+  Contacts for a leaked `1900-01-01` placeholder and reports
+  certification-field coverage. Fields the source would omit are skipped by
+  design — `report_sentinel_dates.py` covers those. Reads the
+  `output/pushed_<UTC>.csv` manifest the push writes, so `--limit` /
+  `--personids` runs verify correctly. Exits non-zero on any failure.
 - `python report_sentinel_dates.py` — read-only check for stale data: finds
   Contacts holding a value that ThoughtSpot would now omit (the sync never
   blanks a field, so those never self-correct). Reports invisible Contacts as

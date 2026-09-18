@@ -389,6 +389,15 @@ def main():
         if not push_records:
             print("No records to push after filtering — nothing to do.")
             return
+
+        # Written before the push: verify_push.py compares against the set
+        # actually submitted, which --limit/--personids make different from
+        # output/members.csv (that one is the whole fetched set).
+        from reporting import write_push_manifest
+
+        manifest = write_push_manifest(push_records, FIELDS)
+        print(f"Recorded the {len(push_records)} submitted record(s) in {manifest}")
+
         results = SalesforceClient().upsert_contacts(push_records)
         failure_count = report_upsert(push_records, results)
         # Non-zero exit so a scheduler flags the run as failed (see reporting.py).

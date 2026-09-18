@@ -34,6 +34,11 @@ python fetch_members.py --push-salesforce
 # Triage DUPLICATE_VALUE failures from a push (read-only; no writes)
 python diagnose_duplicates.py [output/upsert_failures_<UTC>.csv]
 
+# Did the last push actually land? Compares every value the push sent against
+# the Contact it resolves to, and scans for leaked 1900-01-01 placeholders.
+# Read-only; reads the output/pushed_<UTC>.csv manifest the push writes.
+python verify_push.py
+
 # Does any Contact hold a value the source would now omit? (read-only)
 # Writes output/sentinel_conflicts_<UTC>.csv if so. Also refreshes
 # output/members.csv, overwriting the record of what the last push sent.
@@ -74,6 +79,10 @@ All config is loaded via `config.py` from `.env`. The two clients authenticate l
   **For TEXT fields the risk is sharper, and the date argument does not transfer.** A `Certifications__c` still reading `"PMP"` after the credential was removed upstream is an *undated false assertion* — nothing on the record says how old it is, and no future sync will ever correct it, because an empty source value is omitted rather than written. Treat a stale text field as more serious than a stale date, not less.
 
   **Measured 2026-09-18: 0 conflicts — but that is a snapshot, not a proof.** `report_sentinel_dates.py` checked all ten mapped fields across the 1,088 currently-active members having at least one omitted field, and every such field is already empty in Salesforce, so omitting changes nothing *today*. Two limits on that: only currently-active members were examined (a lapsed member's Contact still holds whatever the last sync wrote), and the risk this gotcha describes — a value present upstream now that disappears later — **cannot produce a conflict until after it happens**. So 0 means "has not happened yet", not "cannot happen". 1 member could not be resolved in Salesforce and was left unchecked. Whether either case occurs stays empirical: **re-run the report before changing this rule**, and whenever the dataset or `FIELD_MAP` changes.
+
+- **`output/members.csv` is NOT the record of what a push sent.** `fetch_active()` writes it *before* `--limit` / `--personids` filtering and before the push runs at all, and any later `fetch_members.py` or `report_sentinel_dates.py` run overwrites it. The push writes its own timestamped `output/pushed_<UTC>.csv` manifest (`reporting.write_push_manifest`, called before the write so it survives a crash) — that is what `verify_push.py` compares against. Don't point a verifier at `members.csv`: after a partial push it names records that were never submitted, and every one would be reported as a mismatch.
+
+- **No checker can detect a *blanking* regression.** `verify_push.py` skips fields the source would omit, and `report_sentinel_dates.py` counts an already-empty field as "0 conflicts" — so if the write ever started sending nulls again, both would report a clean pass. Neither holds a before-snapshot. The only real guard is the omit rule in `salesforce_client.upsert_contacts` itself; treat it as load-bearing and don't relax it on the strength of a green verification run.
 
 - **The Contact write must return results in INPUT ORDER.** `reporting.summarize_results()` pairs `records[i]` with `results[i]` *positionally*. `upsert_contacts()` splits its input across two API calls (updates vs inserts), so it carries each record's original index through and writes back via `results[original_index]` — never `append()`. Break that and every failure in `upsert_failures_*.csv` is attributed to the wrong member, silently, with no error anywhere.
 

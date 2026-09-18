@@ -54,6 +54,28 @@ def summarize_results(records: list[dict], results: list[dict]) -> tuple[int, li
     return successes, failures
 
 
+def write_push_manifest(records: list[dict], fields: list[str],
+                        out_dir: str = "output") -> str:
+    """Record exactly which records this push submitted, before it runs.
+
+    output/members.csv is NOT this: fetch_active() writes it before --limit /
+    --personids filtering and before any push, so on a partial push the two
+    sets differ. verify_push.py needs the submitted set to compare against, and
+    a timestamped per-push file also makes staleness visible instead of
+    silently comparing against whatever the last fetch happened to leave behind.
+
+    Written before the push so it survives a crash mid-write.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = os.path.join(out_dir, f"pushed_{ts}.csv")
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(records)
+    return path
+
+
 def write_failure_report(failures: list[dict], out_dir: str = "output") -> str | None:
     """Write failures to a timestamped CSV. Returns the path, or None if there
     were no failures.
