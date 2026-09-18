@@ -43,7 +43,7 @@ from salesforce_client import (
     _soql_quote,
 )
 
-# "...duplicates value on record with id: 0039Y000005JVhVQAW"
+# "...duplicates value on record with id: 003XXXXXXXXXXXXXXX"
 BLOCKING_ID = re.compile(r"record with id:\s*(\w+)")
 TRIAGED_STATUS = "DUPLICATE_VALUE"
 

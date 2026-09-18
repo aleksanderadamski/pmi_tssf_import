@@ -28,6 +28,14 @@ Three checks:
      one matching MORE than one Contact (comparing against a guessed duplicate
      could pass a member the push never wrote).
 
+     ONE EXCEPTION: a value stored exactly lower-cased is reported as INFO, not
+     failed — see LOWERCASED_BY_SALESFORCE. That is a real blind spot, not just
+     cosmetic tidying: for those fields an already-lower-case stored value
+     compares equal whether or not the write applied, so the mixed-case records
+     were the only ones that could detect a silently-ignored write. The run
+     prints whether any mixed-case value survived intact, which is the evidence
+     that distinguishes "normalized on save" from "never written".
+
   3. Coverage. How many Contacts carry each certification field, so a field
      that silently landed empty everywhere is visible as a zero.
 
@@ -78,19 +86,38 @@ def expected_value(ts_field, raw):
     return value
 
 
-def matches(want, got) -> bool:
-    """Did Salesforce store what we sent?
+# Fields observed to come back LOWER-CASED from Salesforce, where that is the
+# same value and not a failed write (72 of 2,464 on the 2026-09-18 run). The
+# test below accepts lower-casing specifically, not any case permutation: an
+# UPPER-cased value is not the behaviour we observed and would mean the stored
+# value came from somewhere other than this push, so it still fails.
+LOWERCASED_BY_SALESFORCE = {"Email"}
+
+
+def compare(sf_field, want, got) -> str:
+    """'match', 'case-only', or 'mismatch'.
 
     The `got is None` branch is load-bearing: a plain str() comparison would
     equate a real Python None from Salesforce with the literal string "None",
     so a member whose Pmppipelinestatus is genuinely "None" would pass even if
-    the field had never been written. Everything else compares as text, since
-    Salesforce returns dates as the same YYYY-MM-DD string to_salesforce_date
-    produces.
+    the field had never been written.
+
+    Values are stripped before comparing because Salesforce trims text on save,
+    so a trailing space we sent would otherwise read as a failed write. Dates
+    need no special handling: Salesforce returns the same YYYY-MM-DD string
+    to_salesforce_date produces.
+
+    'lowercased' is reported but not failed, so a server-side normalization
+    stays visible instead of being silently swallowed by a lenient compare.
     """
     if got is None:
-        return False  # we sent a value; an empty field is never a match
-    return str(got) == str(want)
+        return "mismatch"  # we sent a value; an empty field is never a match
+    want_s, got_s = str(want).strip(), str(got).strip()
+    if got_s == want_s:
+        return "match"
+    if sf_field in LOWERCASED_BY_SALESFORCE and got_s == want_s.lower():
+        return "lowercased"
+    return "mismatch"
 
 
 def newest_manifest():
@@ -127,7 +154,7 @@ def load_sent():
 
 def main():
     sent = load_sent()
-    print(f"Read {len(sent)} records from {MEMBERS_CSV} (what the last run sent)\n")
+    print(f"{len(sent)} record(s) submitted by that run\n")
     sf = SalesforceClient()
 
     # --- 1. Sentinel leak, across every Contact in the org -------------------
@@ -185,7 +212,11 @@ def main():
                 stored[key] = rec
 
     missing = [k for k in by_key if k not in stored and k not in ambiguous]
-    mismatches, checked = [], 0
+    mismatches, lowercased, checked = [], [], 0
+    # Evidence for/against "something lower-cases these fields": if a value we
+    # sent with an uppercase letter came back byte-identical, then nothing is
+    # normalizing, and the lower-cased ones need a different explanation.
+    mixed_case_survived = []
     for key, row in by_key.items():
         contact = stored.get(key)
         if not contact:
@@ -202,8 +233,14 @@ def main():
                 continue  # omitted by design — see the coverage note below
             checked += 1
             got = contact.get(sf_field)
-            if not matches(want, got):
+            verdict = compare(sf_field, want, got)
+            if verdict == "mismatch":
                 mismatches.append((key, sf_field, want, got))
+            elif verdict == "lowercased":
+                lowercased.append((key, sf_field, want, got))
+            elif (verdict == "match" and sf_field in LOWERCASED_BY_SALESFORCE
+                  and any(c.isupper() for c in str(want))):
+                mixed_case_survived.append((key, sf_field, want))
 
     print(f"  {len(stored)} of {len(by_key)} submitted members resolved in Salesforce.")
     print(f"  {checked} written field value(s) compared.")
@@ -223,9 +260,35 @@ def main():
         if len(mismatches) > 15:
             print(f"      ... and {len(mismatches) - 15} more")
         print(f"\n  By field: {dict(Counter(f for _, f, _, _ in mismatches))}")
+    if lowercased:
+        by_f = Counter(f for _, f, _, _ in lowercased)
+        print(f"\n  INFO — {len(lowercased)} value(s) stored LOWER-CASED, not failed: "
+              f"{dict(by_f)}")
+        for key, field, want, got in lowercased[:3]:
+            print(f"      PMI {key}: {field} sent {want!r}, stored {got!r}")
+        if len(lowercased) > 3:
+            print(f"      ... and {len(lowercased) - 3} more")
+        print("  Same address either way. Note this does NOT prove the write landed:")
+        print("  a silently discarded write against an already-lower-case stored value")
+        print("  looks identical. See the evidence line below.")
+
+        if mixed_case_survived:
+            print(f"\n  EVIDENCE: {len(mixed_case_survived)} mixed-case value(s) came "
+                  f"back byte-identical, e.g. {mixed_case_survived[0][1]} for PMI "
+                  f"{mixed_case_survived[0][0]}.")
+            print("  So nothing normalizes these universally — the lower-cased ones "
+                  "above need a real explanation. Investigate before trusting them.")
+        else:
+            print(f"\n  EVIDENCE: no mixed-case value survived intact, consistent with "
+                  f"something lower-casing {'/'.join(sorted(LOWERCASED_BY_SALESFORCE))} "
+                  f"on save (a before-save flow or trigger in this org, most likely — "
+                  f"stock Salesforce preserves Contact.Email case).")
+
     if not (missing or ambiguous or mismatches):
         print("\n  PASS — every submitted member resolved to exactly one Contact, "
-              "and every value sent matches what Salesforce holds.")
+              "and every value sent matches what Salesforce holds"
+              + (f" ({len(lowercased)} counted as matching after lower-casing)."
+                 if lowercased else "."))
 
     print("\n### 3. Certification field coverage\n")
     cert_fields = [FIELD_MAP[f][0] for f in
@@ -249,8 +312,14 @@ def main():
     print("  is the omit rule in salesforce_client itself, not this script.")
 
     failed = bool(leaked) or bool(mismatches) or bool(missing) or bool(ambiguous)
-    print("\n" + ("VERIFICATION FAILED — see above." if failed
-                  else "VERIFICATION PASSED."))
+    if failed:
+        print("\nVERIFICATION FAILED — see above.")
+    else:
+        # Carry the caveat into the summary line and the exit path, so a skimmer
+        # or a scheduler sees that some values were not matched byte-for-byte.
+        note = (f" ({len(lowercased)} value(s) matched only after lower-casing)"
+                if lowercased else "")
+        print(f"\nVERIFICATION PASSED{note}.")
     sys.exit(1 if failed else 0)
 
 

@@ -219,21 +219,19 @@ returned nothing, which is equally true of a Contact hidden by record-level
 sharing (the cause of the 209 `DUPLICATE_VALUE` failures) and of a member with
 no Contact at all.
 
-Almost certainly the second: the full push reported `2463 updates, 1 inserts`
-and created one Contact. Because `Membership_ID__c` is a **unique** external id
-and that index is org-wide, an insert that *succeeded* proves no Contact held
-that id — visible, hidden, or in the Recycle Bin. So for the inserted member the
-sharing-visibility explanation is ruled out outright.
+It was the second, now confirmed twice over. The first full push reported
+`2463 updates, 1 inserts` — and because `Membership_ID__c` is a **unique**
+external id whose index is org-wide, an insert that *succeeded* proves no
+Contact held that id: not visible, not hidden, not in the Recycle Bin. That
+rules out the sharing explanation outright.
 
-What is not strictly proven is that the inserted member *is* the one the report
-couldn't resolve: the two runs cover different populations (1,088 members with
-≥1 omitted field vs. 2,464 currently active) and neither Personid was recorded.
-"Exactly one in each" is strong circumstantial evidence, not identity.
+The next run settled it: `2464 updates, 0 inserts`, and `verify_push.py` —
+which fails on any submitted member without a Contact — reported `2464 of 2464
+submitted members resolved in Salesforce`. The 1,088 members the earlier report
+covered are a subset of those 2,464, so nothing it flagged remains unresolved.
 
-Confirm cheaply next run: `verify_push.py` now fails on any submitted member
-with no Contact, so a clean pass closes this properly. A re-run of
-`report_sentinel_dates.py` reporting 1,088 resolved / 0 unresolved does the
-same.
+(For anyone cross-checking the log: that verify run exited 1, on 72 Email values
+stored lower-cased. Unrelated to this — the resolution count is what closes §12.)
 
 ## 13. `_min_ignore_none()` let a sentinel beat a real date — FIXED 2026-09-18
 

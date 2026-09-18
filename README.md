@@ -104,7 +104,10 @@ pulls the authoritative live column list instead.
   actually landed. A clean `Wrote N/N` only means Salesforce *accepted* the
   writes. This compares every value the push would have sent against the
   Contact it resolves to, and fails on a mismatch, on a submitted member with
-  no Contact, or on one matching more than one Contact. It also scans all
+  no Contact, or on one matching more than one Contact. One exception: a value
+  stored exactly lower-cased (observed on `Email`) is reported as INFO rather
+  than failed — a documented blind spot, since for those fields the comparison
+  can no longer tell a normalized write from one that never applied. It also scans all
   Contacts for a leaked `1900-01-01` placeholder and reports
   certification-field coverage. Fields the source would omit are skipped by
   design — `report_sentinel_dates.py` covers those. Reads the
