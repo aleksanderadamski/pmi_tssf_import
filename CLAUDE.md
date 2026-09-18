@@ -34,6 +34,11 @@ python fetch_members.py --push-salesforce
 # Triage DUPLICATE_VALUE failures from a push (read-only; no writes)
 python diagnose_duplicates.py [output/upsert_failures_<UTC>.csv]
 
+# Does any Contact hold a value the source would now omit? (read-only)
+# Writes output/sentinel_conflicts_<UTC>.csv if so. Also refreshes
+# output/members.csv, overwriting the record of what the last push sent.
+python report_sentinel_dates.py
+
 # Diagnostics
 python list_datasets.py       # list all ThoughtSpot dataset names + GUIDs
 python list_columns.py        # list columns on the configured dataset
@@ -64,7 +69,11 @@ All config is loaded via `config.py` from `.env`. The two clients authenticate l
 
 - **The sync never deletes, and never blanks a field.** Two guards in `salesforce_client.py`, both load-bearing because the integration user needs **Modify All** on Contact (to write the ~209 records it doesn't own) and that grant carries delete rights: (1) `WRITE_METHODS` pins the `/composite/sobjects` call to `PATCH`/`POST`, so no `DELETE` can be issued even by mistake; (2) a field that is `None`/`""` after its `FIELD_MAP` transform is **omitted from the payload**, not sent as `null` — a null would erase whatever the chapter entered by hand in the Salesforce UI. Consequence to accept: a value that legitimately disappears upstream (a lapsed cert) goes **stale** in Salesforce rather than being cleared. Clearing is a deliberate manual act. Don't "fix" this by writing nulls.
 
-  **The `1900-01-01` sentinel is worse than stale — it inverts.** That sentinel means *"never expires"*, and `to_salesforce_date()` maps it to `None`, which is now omitted. So if `PMP_Expiration__c` already holds a past date (hand-entered, or written by the older null-clearing code), the Contact goes on asserting **"expired on X"** when the source says the cert never expires. Writing null used to be the *correct* encoding of "no expiry"; omitting it is not. Those records need a manual clear — a report of Contacts whose `Pmpexpiredate` is the sentinel but whose `PMP_Expiration__c` is non-null would find them.
+  **For DATE fields, keeping an old value is usually CORRECT, not a bug.** A PMP that expired stays expired until the member renews — at which point ThoughtSpot supplies a new real date (it wins `_max_ignore_none` in `dedupe_by_person()`) and the sync writes it. So an old `PMP_Expiration__c` is normally true, and not overwriting it is right. It is also self-dating: a reader sees "expired 2019" and knows exactly what it claims. The only wrong case is a member whose upstream expiry becomes the `1900-01-01` sentinel while Salesforce still holds a real date.
+
+  **For TEXT fields the risk is sharper, and the date argument does not transfer.** A `Certifications__c` still reading `"PMP"` after the credential was removed upstream is an *undated false assertion* — nothing on the record says how old it is, and no future sync will ever correct it, because an empty source value is omitted rather than written. Treat a stale text field as more serious than a stale date, not less.
+
+  Whether either case actually occurs is empirical, not a matter of argument — `report_sentinel_dates.py` measures both, across every mapped field, and refuses to report a clean zero when some Contacts were invisible to the integration user. **Don't change the omit-empties rule without running it first.**
 
 - **The Contact write must return results in INPUT ORDER.** `reporting.summarize_results()` pairs `records[i]` with `results[i]` *positionally*. `upsert_contacts()` splits its input across two API calls (updates vs inserts), so it carries each record's original index through and writes back via `results[original_index]` — never `append()`. Break that and every failure in `upsert_failures_*.csv` is attributed to the wrong member, silently, with no error anywhere.
 
@@ -74,7 +83,7 @@ All config is loaded via `config.py` from `.env`. The two clients authenticate l
 
 - **`external_id_key()` is lossier than Salesforce's unique index.** It strips whitespace so an int `Personid` matches a stored `"123"`; the index treats `"123"` and `" 123"` as two distinct values. Two Contacts can therefore collapse to one key. `fetch_existing_contact_ids()` returns those keys in its `ambiguous` set and drops them from the map, and the write reports them as `AMBIGUOUS_EXTERNAL_ID` rather than picking one — updating a guessed record would silently overwrite the wrong person.
 
-- **Sentinel dates exist in the source.** Some records carry `1900-01-01` (`-2208988800`) as a "no expiry" marker (confirmed on PMP cert expiries). `to_salesforce_date()` maps these to `None`; any raw-epoch comparison (like `filter_currently_active()`) must gate on `is_plausible_date_epoch()` so the two paths agree, or you get members silently dropped / `None` written where the filter kept them.
+- **Sentinel dates exist in the source.** Some records carry `1900-01-01` (`-2208988800`). Its *presence* is confirmed on PMP cert expiries; its *meaning* is assumed to be "no expiry" and has never been verified against the business. `report_sentinel_dates.py` §2–3 settles it by showing what the value co-occurs with — if those members have no PMP status, no start date and no certification list, it means "this member has no PMP" instead. **If the report shows that, this claim goes stale in five places at once:** here, the architecture bullet above, `date_utils.py` (module docstring and the `_MIN_EPOCH` comment), and `TAKEOVER.md`. Fix them together. `to_salesforce_date()` maps these to `None`; any raw-epoch comparison (like `filter_currently_active()`) must gate on `is_plausible_date_epoch()` so the two paths agree, or you get members silently dropped / `None` written where the filter kept them.
 
 ## Before committing
 

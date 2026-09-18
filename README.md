@@ -100,6 +100,13 @@ pulls the authoritative live column list instead.
 - `python test_sf_auth.py` — authenticates to Salesforce and runs a trivial
   SOQL query, independent of the write logic. Run this before ever using
   `--push-salesforce`.
+- `python report_sentinel_dates.py` — read-only check for stale data: finds
+  Contacts holding a value that ThoughtSpot would now omit (the sync never
+  blanks a field, so those never self-correct). Reports invisible Contacts as
+  UNKNOWN rather than counting them as clean. Writes
+  `output/sentinel_conflicts_<UTC>.csv` if any exist, and refreshes
+  `output/members.csv` as a side effect — which overwrites the record of what
+  the last push actually sent, so copy it first if you still need it.
 - `python diagnose_duplicates.py [output/upsert_failures_<UTC>.csv]` —
   read-only triage for `DUPLICATE_VALUE` failures. Says, per record, whether
   the blocking Contact is visible, soft-deleted in the Recycle Bin, or hidden
