@@ -100,6 +100,13 @@ pulls the authoritative live column list instead.
 - `python test_sf_auth.py` — authenticates to Salesforce and runs a trivial
   SOQL query, independent of the write logic. Run this before ever using
   `--push-salesforce`.
+- `python diagnose_diacritics.py` — read-only trace of where accented
+  characters are lost. Names land in Salesforce transliterated (Ą→A, Ł→L), and
+  the fix differs completely depending on whether ThoughtSpot already returns
+  ASCII, this pipeline drops them, or Salesforce folds them on save — so this
+  checks each stage in turn and reports which. Tests for any non-ASCII
+  codepoint rather than a fixed alphabet, so Czech, Hungarian or Turkish names
+  are covered identically; nothing in it is Polish-specific.
 - `python verify_push.py` — read-only verification that a completed push
   actually landed. A clean `Wrote N/N` only means Salesforce *accepted* the
   writes. This compares every value the push would have sent against the

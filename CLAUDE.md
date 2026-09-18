@@ -44,6 +44,11 @@ python verify_push.py
 # output/members.csv, overwriting the record of what the last push sent.
 python report_sentinel_dates.py
 
+# Where do accented characters get lost? (read-only) Traces a value through
+# ThoughtSpot -> local file -> Salesforce and names the stage that folds
+# them. Alphabet-agnostic: tests for any non-ASCII codepoint.
+python diagnose_diacritics.py
+
 # Diagnostics
 python list_datasets.py       # list all ThoughtSpot dataset names + GUIDs
 python list_columns.py        # list columns on the configured dataset
@@ -83,6 +88,10 @@ All config is loaded via `config.py` from `.env`. The two clients authenticate l
 - **Something lower-cases `Email` between us and storage — cause NOT confirmed.** Observed 2026-09-18: of 2,464 Contacts, 72 came back lower-cased relative to what ThoughtSpot supplied (`Jane.Doe@example.com` → `jane.doe@example.com`). Stated as an observation on purpose: stock Salesforce preserves case on `Contact.Email` (it is `User.Username` that gets lower-cased), so the likelier cause is a **before-save flow or Apex trigger in this org** — which is org-specific and can be deactivated tomorrow. A *silently discarded* `Email` write would look identical. `verify_push.py` §2 now prints whether any exactly-matching address contained an uppercase letter: if one did, normalization is disproved and these 72 need a real explanation.
 
   `verify_push.py` treats a lower-cased-only difference as **INFO, not a failure** (`CASE_INSENSITIVE_FIELDS`), since it is the same mailbox either way. **The cost, which is real:** the ~2,390 already-lower-case addresses compare equal whether or not the write applied, so the mixed-case ones were the *only* records that could distinguish "Email write landed" from "Email write silently ignored" — and they no longer fail the run. An `Email` write regression is now invisible here, exactly like the blanking regression below. The leniency is scoped to `Email` alone and to lower-casing alone: any other case permutation, and any case difference in `PMP_Status__c` or `Certifications__c`, still fails.
+
+- **Accented names arrive in Salesforce transliterated — stage not yet confirmed.** Reported 2026-09-18: names carry Polish letters in ThoughtSpot but land folded (`Ą`→`A`, `Ł`→`L`). Two things are already established and shouldn't be re-derived: (1) `verify_push.py` compares the pushed manifest against Salesforce across the *whole* population and reported mismatches in `Email` only — so **Salesforce is not folding what we send**; (2) nothing in this codebase calls `unicodedata`/`normalize`/ASCII encoding, and `requests`' `json=` escapes non-ASCII losslessly as `\uXXXX`. That leaves ThoughtSpot returning already-folded text as the live hypothesis. `diagnose_diacritics.py` settles it and records which stage. **Never "fix" this with a transliteration map** — the sync is used by chapters in other countries, so every check must be `ord(c) > 127`, never a per-language letter list.
+
+  Useful when reading its output: `Ł` (U+0141) has **no Unicode decomposition**, so NFKD leaves it alone, while `Ą` NFKD-folds to `A`. Naive accent-stripping therefore cannot produce `Ł`→`L` — that needs a real transliteration table (Unidecode, `iconv //TRANSLIT`, ICU, a cleansing package). Which of the two you see narrows the culprit.
 
 - **`output/members.csv` is NOT the record of what a push sent.** `fetch_active()` writes it *before* `--limit` / `--personids` filtering and before the push runs at all, and any later `fetch_members.py` or `report_sentinel_dates.py` run overwrites it. The push writes its own timestamped `output/pushed_<UTC>.csv` manifest (`reporting.write_push_manifest`, called before the write so it survives a crash) — that is what `verify_push.py` compares against. Don't point a verifier at `members.csv`: after a partial push it names records that were never submitted, and every one would be reported as a mismatch.
 
