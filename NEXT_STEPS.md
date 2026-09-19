@@ -290,13 +290,33 @@ Evidence, strongest first:
   `Email` only. Nothing is folding what we send.
 - `diagnose_diacritics.py` then traced accented members end to end: sent and
   stored equal at every stage.
-- Nothing in this codebase calls `unicodedata`, `normalize`, or encodes to
-  ASCII, and `requests`' `json=` escapes non-ASCII losslessly as `\uXXXX`.
+- Nothing in the fetch → transform → payload path calls `unicodedata`,
+  `normalize`, or encodes to ASCII, and `requests`' `json=` escapes non-ASCII
+  losslessly as `\uXXXX`. (The read-only checkers do: `verify_push.py`
+  NFC-normalizes its *comparison* and `diagnose_diacritics.py` uses NFKD to
+  classify a fold. Neither touches what is written.)
 
 What was measured upstream: **182 of 2,467** currently-active members carry a
-non-ASCII character in a name field in ThoughtSpot. The rest arrive as ASCII
-already. Note this does *not* prove any of those is a folded version of an
-accented name — it only means the source supplies them that way.
+non-ASCII character in a name field in ThoughtSpot; the rest arrive as ASCII
+already. Corroborating that, a human spot-check of the ThoughtSpot UI on
+2026-09-19 found a common Polish given name present both ways across two
+records — accented on one, plain on the other. Eyeballed, n=2, and two records
+bearing the same given name may simply be two people who spell their own names
+differently, so it supports the reading without establishing it.
+
+**Closed on the full-population evidence** (`verify_push.py`, 2,464 records),
+with the UI check as corroboration. That is also the standing guarantee going
+forward — it compares `FirstName`/`LastName` on every pushed record,
+NFC-normalized so a composed/decomposed byte difference does not cry wolf
+(reported as INFO, since it would still mean something re-encodes names) while
+a genuinely folded accent fails.
+
+**What it does not cover:** the baseline is the push manifest, written *after*
+the ThoughtSpot fetch, so it verifies the manifest → Salesforce leg only. If
+`/searchdata` itself began folding characters, the manifest and Salesforce would
+agree and it would pass indefinitely. Only `diagnose_diacritics.py` looks at
+that leg — which is why the open hypothesis above is about the source, and why a
+recurrence should be traced with a specific PMI id rather than re-run in bulk.
 
 If it is reported again, do this rather than re-deriving: get the **specific**
 PMI id and run `python diagnose_diacritics.py <id>`. A sample cannot refute a

@@ -47,6 +47,7 @@ import csv
 import glob
 import os
 import sys
+import unicodedata
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -102,19 +103,36 @@ def compare(sf_field, want, got) -> str:
     so a member whose Pmppipelinestatus is genuinely "None" would pass even if
     the field had never been written.
 
-    Values are stripped before comparing because Salesforce trims text on save,
-    so a trailing space we sent would otherwise read as a failed write. Dates
-    need no special handling: Salesforce returns the same YYYY-MM-DD string
-    to_salesforce_date produces.
+    Values are stripped because Salesforce trims text on save, so a trailing
+    space we sent would otherwise read as a failed write, and NFC-normalized
+    because composed and decomposed forms of the same accented letter are
+    canonically equivalent text in different bytes. Without that, a store
+    returning decomposed forms would report every accented name as a mismatch —
+    182 of them — burying real findings under a false alarm about exactly the
+    characters this project was asked to watch. Normalizing is not leniency:
+    NFC only equates strings Unicode defines as the same. A genuinely folded
+    accent (an l-stroke stored as a plain l) is NOT canonically equivalent and
+    still fails, which is what keeps this the standing check for that.
+
+    Dates need no special handling: Salesforce returns the same YYYY-MM-DD
+    string to_salesforce_date produces.
 
     'lowercased' is reported but not failed, so a server-side normalization
     stays visible instead of being silently swallowed by a lenient compare.
     """
     if got is None:
         return "mismatch"  # we sent a value; an empty field is never a match
-    want_s, got_s = str(want).strip(), str(got).strip()
-    if got_s == want_s:
+    want_raw, got_raw = str(want).strip(), str(got).strip()
+    if got_raw == want_raw:
         return "match"
+    # Canonically equivalent but not byte-equal: same text, so not a failure -
+    # but reported rather than swallowed, because it is direct evidence that
+    # something in the write path re-encodes name text, which is the live
+    # hypothesis NEXT_STEPS section 14 leaves open.
+    want_s = unicodedata.normalize("NFC", want_raw)
+    got_s = unicodedata.normalize("NFC", got_raw)
+    if got_s == want_s:
+        return "nfc-only"
     if sf_field in LOWERCASED_BY_SALESFORCE and got_s == want_s.lower():
         return "lowercased"
     return "mismatch"
@@ -212,7 +230,11 @@ def main():
                 stored[key] = rec
 
     missing = [k for k in by_key if k not in stored and k not in ambiguous]
-    mismatches, lowercased, checked = [], [], 0
+    mismatches, lowercased, nfc_only, checked = [], [], [], 0
+    # Counted so a PASS can distinguish "accents verified intact" from "no
+    # accented value was in this push at all" - the docs name this the standing
+    # check for that, so the run has to say which happened.
+    accented_ok = 0
     # Evidence for/against "something lower-cases these fields": if a value we
     # sent with an uppercase letter came back byte-identical, then nothing is
     # normalizing, and the lower-cased ones need a different explanation.
@@ -238,9 +260,13 @@ def main():
                 mismatches.append((key, sf_field, want, got))
             elif verdict == "lowercased":
                 lowercased.append((key, sf_field, want, got))
+            elif verdict == "nfc-only":
+                nfc_only.append((key, sf_field, want, got))
             elif (verdict == "match" and sf_field in LOWERCASED_BY_SALESFORCE
                   and any(c.isupper() for c in str(want))):
                 mixed_case_survived.append((key, sf_field, want))
+            if verdict in ("match", "nfc-only") and any(ord(c) > 127 for c in str(want)):
+                accented_ok += 1
 
     print(f"  {len(stored)} of {len(by_key)} submitted members resolved in Salesforce.")
     print(f"  {checked} written field value(s) compared.")
@@ -260,6 +286,28 @@ def main():
         if len(mismatches) > 15:
             print(f"      ... and {len(mismatches) - 15} more")
         print(f"\n  By field: {dict(Counter(f for _, f, _, _ in mismatches))}")
+    # The standing accent check: say explicitly which of "verified" / "none
+    # present" a PASS means, so a green run is not read as proof when the push
+    # simply contained no accented value.
+    accented_total = accented_ok + sum(
+        1 for _, _, want, _ in mismatches if any(ord(c) > 127 for c in str(want)))
+    if accented_total:
+        print(f"\n  ACCENTS: {accented_ok} of {accented_total} accented value(s) "
+              f"reached Salesforce intact.")
+    else:
+        print("\n  ACCENTS: none present in this push - nothing to verify, and a "
+              "PASS below says nothing about them.")
+
+    if nfc_only:
+        print(f"\n  INFO - {len(nfc_only)} value(s) stored in a different Unicode "
+              f"normalization form, not failed: "
+              f"{dict(Counter(f for _, f, _, _ in nfc_only))}")
+        for key, field, want, got in nfc_only[:3]:
+            print(f"      PMI {key}: {field} sent {ascii(want)}, stored {ascii(got)}")
+        print("  Canonically equivalent - the same text in different bytes, so the")
+        print("  write landed. But something IS re-encoding name text; worth knowing")
+        print("  which component, since that is the open question in NEXT_STEPS 14.")
+
     if lowercased:
         by_f = Counter(f for _, f, _, _ in lowercased)
         print(f"\n  INFO — {len(lowercased)} value(s) stored LOWER-CASED, not failed: "
