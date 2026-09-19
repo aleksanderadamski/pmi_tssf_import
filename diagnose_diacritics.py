@@ -1,13 +1,23 @@
-"""Find where accented characters are lost between ThoughtSpot and Salesforce.
+"""Trace accented characters from ThoughtSpot through to Salesforce.
 
-    python diagnose_diacritics.py
+    python diagnose_diacritics.py                # sample accented members
+    python diagnose_diacritics.py 7169682,884213 # trace these members exactly
 
 STRICTLY READ-ONLY. Nothing is written to Salesforce.
 
-Reported symptom: names hold Polish letters in ThoughtSpot but land in
-Salesforce transliterated - A-ogonek becomes A, L-stroke becomes L. The right
-fix depends entirely on WHERE that happens, and the candidates need completely
-different responses:
+Original symptom: names hold Polish letters in ThoughtSpot but were reported as
+transliterated in Salesforce (A-ogonek -> A, L-stroke -> L). Investigated
+2026-09-19 and NOT REPRODUCED: accents survived every stage, and 182 of 2,467
+currently-active members carry a non-ASCII name character in the source while
+the rest arrive as ASCII already. Kept for the next report of this kind.
+
+PASS AN ID LIST when someone names a specific member. Without one this samples
+a few accented members at random, and a sample cannot refute a claim about one
+person - a Salesforce Flow scoped by owner, record type or created-date would
+fold some records and not others. Tracing the reported member is what actually
+closes such a report.
+
+Where the stages point, if characters ARE lost:
 
   ThoughtSpot already returns ASCII  -> source-side. No change here can restore
                                         what we were never given.
@@ -15,19 +25,10 @@ different responses:
   Salesforce folds them on save      -> org-side: a before-save Flow, an Apex
                                         trigger, or a data-cleansing package.
 
-What the existing evidence already settles, and what it does not:
-
-  verify_push.py compares the pushed manifest against Salesforce - that is
-  stage 2 against stage 3. Its 2026-09-18 run reported mismatches in Email
-  ONLY, across the whole population. That RULES OUT Salesforce folding what we
-  send. It says nothing about stage 1 -> stage 2.
-
-  Separately, nothing in this codebase calls unicodedata, normalize, or encodes
-  to ASCII, and requests' json= escapes non-ASCII losslessly as \\uXXXX. That
-  argues against candidate 2.
-
-So the prior is "ThoughtSpot returns ASCII", but the two arguments are
-different evidence and are kept separate below rather than merged into a guess.
+For the whole population rather than a sample, verify_push.py is the check:
+it compares FirstName/LastName (and every other mapped field) for every record
+the last push sent. Prefer it; this script explains WHERE a difference arises,
+but verify_push.py is what establishes whether one exists at all.
 
 A note that narrows the culprit when folding IS found: U+0141 (L with stroke)
 has NO Unicode decomposition, so NFKD leaves it alone, while A-ogonek NFKD-folds
@@ -43,6 +44,7 @@ are handled identically.
 import csv
 import glob
 import os
+import random
 import sys
 import unicodedata
 from datetime import datetime, timezone
@@ -133,6 +135,10 @@ def build_records(columns, rows):
 
 
 def main():
+    wanted = set()
+    if len(sys.argv) > 1:
+        wanted = {external_id_key(p) for p in sys.argv[1].split(",") if p.strip()}
+
     ts = ThoughtSpotClient()
     columns, rows = ts.search_data(get_dataset_id(ts), QUERY_FIELDS)
     raw, records = build_records(columns, rows)
@@ -141,22 +147,60 @@ def main():
     print("Tracing accented characters through each stage")
     print("=" * 72)
 
+    if wanted:
+        records = [r for r in records
+                   if external_id_key(r["Personid"]) in wanted]
+        missing = wanted - {external_id_key(r["Personid"]) for r in records}
+        print(f"\n  Tracing {len(records)} requested member(s) specifically.")
+        if missing:
+            print(f"  NOT in the currently-active set, so never pushed: "
+                  f"{sorted(missing)}")
+        if not records:
+            print("\n  Nothing to trace. A member absent here is not evidence about")
+            print("  accents - they may simply have lapsed. Check the id first.")
+            return
+
     # --- Stage 1 ------------------------------------------------------------
     raw_hits = [r for r in raw if any(has_accent(r.get(f)) for f in TEXT_FIELDS)]
     live_hits = [r for r in records if any(has_accent(r.get(f)) for f in TEXT_FIELDS)]
     named_hits = [r for r in records if any(has_accent(r.get(f)) for f in NAME_FIELDS)]
 
     print(f"\n  STAGE 1 - raw /searchdata response")
-    print(f"    {len(raw_hits)} of {len(raw)} term rows carry a non-ASCII character")
-    print(f"    {len(live_hits)} of {len(records)} currently-active members do "
-          f"(this is the set a push actually writes)")
-    print(f"    {len(named_hits)} of those have the accent in a NAME field")
-    for r in named_hits[:SAMPLE]:
-        for f in NAME_FIELDS:
-            if has_accent(r.get(f)):
-                print(f"      PMI {r['Personid']}: {f} = {show(r[f])}")
+    if not wanted:
+        print(f"    {len(raw_hits)} of {len(raw)} term rows carry a non-ASCII character")
+        print(f"    {len(live_hits)} of {len(records)} currently-active members do "
+              f"(this is the set a push actually writes)")
+        print(f"    {len(named_hits)} of those have the accent in a NAME field")
 
-    if not live_hits:
+    if wanted:
+        # A named member is traced whether or not their name is accented: "the
+        # source already has it as ASCII" is exactly the answer being sought.
+        sample = records
+        for r in sample:
+            for f in NAME_FIELDS:
+                mark = "" if has_accent(r.get(f)) else "   (already ASCII in source)"
+                print(f"      PMI {r['Personid']}: {f} = {show(r.get(f))}{mark}")
+        if not any(has_accent(r.get(f)) for r in sample for f in NAME_FIELDS):
+            print("\n" + "=" * 72)
+            print("VERDICT: ThoughtSpot supplies these names WITHOUT accents.")
+            print("=" * 72)
+            print("\n  Nothing downstream stripped anything - the source has no accents")
+            print("  for these members, so Salesforce holding a plain name is correct.")
+            print("\n  If the ThoughtSpot UI shows accents for this exact member, the")
+            print("  dataset exposes a transliterated copy of the column: run")
+            print("  list_columns.py and look for a native-spelling variant.")
+            return
+    else:
+        # Random rather than head-of-list: /searchdata order correlates with
+        # record age, and a Flow scoped by created-date or owner would fold
+        # exactly the records a head slice over-represents.
+        sample = random.sample(named_hits, min(SAMPLE, len(named_hits)))
+        for r in sample:
+            for f in NAME_FIELDS:
+                if has_accent(r.get(f)):
+                    print(f"      PMI {r['Personid']}: {f} = {show(r[f])}")
+
+    if not wanted and not live_hits:
         print("\n" + "=" * 72)
         print("VERDICT: ThoughtSpot returns ASCII-only text for currently-active "
               "members.")
@@ -176,7 +220,7 @@ def main():
         print("    3. Otherwise it is a PMI/source-data question, not a code one.")
         return
 
-    if not named_hits:
+    if not wanted and not named_hits:
         print("\n" + "=" * 72)
         print("INCONCLUSIVE: accents exist, but not in FirstName/LastName.")
         print("=" * 72)
@@ -184,7 +228,6 @@ def main():
         print("  of the accented members has an accented name. Nothing to trace.")
         return
 
-    sample = named_hits[:SAMPLE]
     sample_ids = [external_id_key(r["Personid"]) for r in sample]
 
     # --- Stage 2: these exact members in the local artifact ------------------
@@ -200,10 +243,24 @@ def main():
         print(f"\n  STAGE 2 - {local_path}")
         print(f"    {len(local_rows)} record(s), written "
               f"{int(age.total_seconds() // 60)} min ago")
-        if len(local_rows) < len(records):
-            print(f"    WARNING: narrower than the {len(records)} currently-active")
-            print(f"    members - probably a --limit/--personids run. A sampled member")
-            print(f"    missing from it means nothing.")
+        # Say it whenever the file and the live set differ at all: a member who
+        # joined since the push is absent from the manifest even when the
+        # manifest is the LARGER of the two (more lapsed than joined).
+        if len(local_rows) != len(records):
+            shortfall = len(records) - len(local_rows)
+            # A small gap is consistent with churn between runs; a large one
+            # means the push was filtered. Stated as consistency, not cause -
+            # this script never compares the two id sets.
+            small = 0 < shortfall <= max(1, len(records) // 100)
+            if small or shortfall < 0:
+                print(f"    NOTE: {abs(shortfall)} record(s) different from the "
+                      f"{len(records)} currently-active members, consistent with "
+                      f"churn since that push.")
+            else:
+                print(f"    WARNING: {shortfall} fewer than the {len(records)} "
+                      f"currently-active members - this file does not represent the "
+                      f"population; probably a --limit/--personids run.")
+            print(f"    Either way, a sampled member missing from it proves nothing.")
         found = 0
         for r in sample:
             key = external_id_key(r["Personid"])

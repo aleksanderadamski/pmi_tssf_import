@@ -277,6 +277,34 @@ Re-check with `report_sentinel_dates.py` §1 whenever the source changes: a
 per-member `omitted` count above zero is now a source fact (every row that
 member has is sentinel), no longer something the merge could manufacture.
 
+## 14. "Salesforce mangles Polish names" — investigated 2026-09-19, NOT reproduced
+
+Reported: names hold Polish letters in ThoughtSpot but arrive transliterated in
+Salesforce (`Ą`→`A`, `Ł`→`L`). Recorded so the next person who hears this has a
+dated result instead of re-running the whole investigation.
+
+Evidence, strongest first:
+
+- `verify_push.py` compares `FirstName`/`LastName` (and every other mapped
+  field) for **all 2,464** records the last push sent. It reported mismatches in
+  `Email` only. Nothing is folding what we send.
+- `diagnose_diacritics.py` then traced accented members end to end: sent and
+  stored equal at every stage.
+- Nothing in this codebase calls `unicodedata`, `normalize`, or encodes to
+  ASCII, and `requests`' `json=` escapes non-ASCII losslessly as `\uXXXX`.
+
+What was measured upstream: **182 of 2,467** currently-active members carry a
+non-ASCII character in a name field in ThoughtSpot. The rest arrive as ASCII
+already. Note this does *not* prove any of those is a folded version of an
+accented name — it only means the source supplies them that way.
+
+If it is reported again, do this rather than re-deriving: get the **specific**
+PMI id and run `python diagnose_diacritics.py <id>`. A sample cannot refute a
+claim about one person — a Salesforce Flow scoped by owner, record type or
+created-date would fold some records and not others. If that trace shows
+ThoughtSpot supplying an accented name and Salesforce storing a folded one,
+this conclusion is overturned and the culprit is org-side.
+
 ## Reminder: certification fields (later effort)
 
 When the certification sync is built (full plan in `TAKEOVER.md` → "certification

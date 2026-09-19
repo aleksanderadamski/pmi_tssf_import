@@ -100,13 +100,17 @@ pulls the authoritative live column list instead.
 - `python test_sf_auth.py` — authenticates to Salesforce and runs a trivial
   SOQL query, independent of the write logic. Run this before ever using
   `--push-salesforce`.
-- `python diagnose_diacritics.py` — read-only trace of where accented
-  characters are lost. Names land in Salesforce transliterated (Ą→A, Ł→L), and
-  the fix differs completely depending on whether ThoughtSpot already returns
-  ASCII, this pipeline drops them, or Salesforce folds them on save — so this
-  checks each stage in turn and reports which. Tests for any non-ASCII
-  codepoint rather than a fixed alphabet, so Czech, Hungarian or Turkish names
-  are covered identically; nothing in it is Polish-specific.
+- `python diagnose_diacritics.py [PMI-id,...]` — read-only trace of accented
+  characters through ThoughtSpot → local file → Salesforce, reporting which
+  stage (if any) folds them. Investigated 2026-09-19 after a report that names
+  arrive transliterated: **not reproduced** — accents survived every stage, and
+  182 of 2,467 active members carry a non-ASCII name character in the source
+  while the rest arrive as ASCII already. Pass a PMI id list to trace named
+  members exactly; that is what settles a report about a specific person, since
+  a sample cannot. For the whole population, `verify_push.py` is the check.
+  Tests for any non-ASCII codepoint rather than a fixed alphabet, so Czech,
+  Hungarian or Turkish names are covered identically; nothing is
+  Polish-specific, and no fix here should ever introduce a transliteration map.
 - `python verify_push.py` — read-only verification that a completed push
   actually landed. A clean `Wrote N/N` only means Salesforce *accepted* the
   writes. This compares every value the push would have sent against the
