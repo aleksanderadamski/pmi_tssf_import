@@ -72,7 +72,8 @@ Verify auth first (read-only): `python test_sf_auth.py`.
 **Goal (decided with the user):** put certifications on the Contact as **flat
 per-credential fields** (not a child object). First build: **PMP structured
 fields + a `Certifications` summary field.** Investigation is done — reproduce
-with `investigate_certifications.py`. Key findings:
+with a one-off script (since removed; see CLAUDE.md > Retired tooling).
+Key findings:
 - Person-level cert columns return **one row per person, no fan-out** (safe to
   flatten, no dedup needed).
 - **PMP fully available**: `Pmppipelinestatus` (17 values), `Pmpstartdate`,

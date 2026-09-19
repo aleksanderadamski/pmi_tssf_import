@@ -14,8 +14,8 @@ matched on `Personid`.
   `Membership_ID__c` happens **client-side** — the sync resolves it to a
   Contact Id with its own SOQL query, then updates by Id or inserts. It does
   not use Salesforce's external-ID upsert endpoint, which silently failed to
-  match 209 of 2,463 records on a production run (see *Notes* and
-  `diagnose_duplicates.py`). Mapped as:
+  match 209 of 2,463 records on a production run (CLAUDE.md, the external-ID
+  gotcha, has the diagnosis). Mapped as:
   - `Personid` → `Contact.Membership_ID__c` (external ID, used to match)
   - `Firstname` → `Contact.FirstName`
   - `Lastname` → `Contact.LastName` (required by Salesforce whenever the
@@ -93,24 +93,9 @@ pulls the authoritative live column list instead.
 - `python debug_searchdata.py` — dumps a raw 5-row `/searchdata` result
   (columns + rows) to `output/debug_searchdata_response.json`, for when
   something about the response shape needs re-checking.
-- `python investigate_fields.py` / `python investigate_currency.py` —
-  one-off scripts used to diagnose the `Isactive`-vs-currency issue above;
-  kept around in case a similar "does this field mean what it sounds like"
-  question comes up for a new field later.
 - `python test_sf_auth.py` — authenticates to Salesforce and runs a trivial
   SOQL query, independent of the write logic. Run this before ever using
   `--push-salesforce`.
-- `python diagnose_diacritics.py [PMI-id,...]` — read-only trace of accented
-  characters through ThoughtSpot → local file → Salesforce, reporting which
-  stage (if any) folds them. Investigated 2026-09-19 after a report that names
-  arrive transliterated: **not reproduced** — accents survived every stage, and
-  182 of 2,467 active members carry a non-ASCII name character in the source
-  while the rest arrive as ASCII already. Pass a PMI id list to trace named
-  members exactly; that is what settles a report about a specific person, since
-  a sample cannot. For the whole population, `verify_push.py` is the check.
-  Tests for any non-ASCII codepoint rather than a fixed alphabet, so Czech,
-  Hungarian or Turkish names are covered identically; nothing is
-  Polish-specific, and no fix here should ever introduce a transliteration map.
 - `python verify_push.py` — read-only verification that a completed push
   actually landed. A clean `Wrote N/N` only means Salesforce *accepted* the
   writes. This compares every value the push would have sent against the
@@ -121,21 +106,9 @@ pulls the authoritative live column list instead.
   can no longer tell a normalized write from one that never applied. It also scans all
   Contacts for a leaked `1900-01-01` placeholder and reports
   certification-field coverage. Fields the source would omit are skipped by
-  design — `report_sentinel_dates.py` covers those. Reads the
+  design. Reads the
   `output/pushed_<UTC>.csv` manifest the push writes, so `--limit` /
   `--personids` runs verify correctly. Exits non-zero on any failure.
-- `python report_sentinel_dates.py` — read-only check for stale data: finds
-  Contacts holding a value that ThoughtSpot would now omit (the sync never
-  blanks a field, so those never self-correct). Reports invisible Contacts as
-  UNKNOWN rather than counting them as clean. Writes
-  `output/sentinel_conflicts_<UTC>.csv` if any exist, and refreshes
-  `output/members.csv` as a side effect — which overwrites the record of what
-  the last push actually sent, so copy it first if you still need it.
-- `python diagnose_duplicates.py [output/upsert_failures_<UTC>.csv]` —
-  read-only triage for `DUPLICATE_VALUE` failures. Says, per record, whether
-  the blocking Contact is visible, soft-deleted in the Recycle Bin, or hidden
-  from the integration user by sharing — which is the difference between a
-  code fix and a permissions fix. Defaults to the newest failure CSV.
 
 ## Notes
 
@@ -163,5 +136,5 @@ pulls the authoritative live column list instead.
 - Run `--push-salesforce --limit 5` against a **sandbox**, verify those
   Contacts by hand, then a full sandbox run, then repeat against production
   (separate org — separate Connected App/cert/permission set).
-- Eventually: `git init`, push to GitHub, move `.env` values to Actions
-  secrets, add a scheduled workflow (cron) to run this unattended.
+- Move execution to GitHub Actions so it runs unattended and needs no
+  per-machine setup — `NEXT_STEPS.md` §11 has the secrets list and rollout.

@@ -30,13 +30,12 @@ This replaced the single-call "upsert by external ID" endpoint
 the external ID itself, and on a 2,463-record production run it failed to
 resolve 209 of them — attempting an insert that the unique index rejected
 with DUPLICATE_VALUE, quoting the Id of the record it should have updated.
-Resolving the ids ourselves makes the match explicit and inspectable; see
-diagnose_duplicates.py for the read-only triage of a failure CSV.
+Resolving the ids ourselves makes the match explicit and inspectable.
 
 Note that step 1 runs under the integration user's sharing rules, just as the
 old endpoint's internal lookup did. If a Contact is hidden from that user, it
 is missing here too and the insert still collides — that failure mode is a
-permissions fix, not a code one, and the diagnostic identifies it.
+permissions fix (View All on Contact), not a code one.
 
 This module never deletes. It only ever adds or updates:
 
@@ -189,19 +188,18 @@ class SalesforceClient:
             "Content-Type": "application/json",
         }
 
-    def query(self, soql: str, include_deleted: bool = False) -> list[dict]:
+    def query(self, soql: str) -> list[dict]:
         """Run a SOQL query, following nextRecordsUrl pagination to the end.
 
-        include_deleted switches to /queryAll, which also returns soft-deleted
-        (Recycle Bin) rows — those stay in the Membership_ID__c unique index
-        while being invisible to a normal query, which is one of the ways an
-        external-ID upsert can miss a match and then fail as a duplicate.
+        Note this sees only what the integration user can see, and only
+        non-deleted rows. A soft-deleted Contact still occupies the
+        Membership_ID__c unique index while being invisible here — see the
+        external-ID gotcha in CLAUDE.md. Diagnosing that needs /queryAll.
         """
         headers = self._headers()  # ensures authenticate() ran, sets _instance_url
-        endpoint = "queryAll" if include_deleted else "query"
         url = (
             f"{self._instance_url}/services/data/{config.SF_API_VERSION}"
-            f"/{endpoint}?q={quote(soql)}"
+            f"/query?q={quote(soql)}"
         )
         records = []
         seen_pages = set()
@@ -239,8 +237,8 @@ class SalesforceClient:
 
         Note "resolve": this runs under the integration user's sharing rules,
         exactly as the external-ID upsert's own lookup did. A Contact hidden
-        from that user is absent here too — diagnose_duplicates.py tells the
-        two cases apart.
+        from that user is absent here too, which is indistinguishable here from
+        the Contact not existing; see the external-ID gotcha in CLAUDE.md.
         """
         wanted = {external_id_key(k) for k in keys}
         wanted.discard("")
@@ -278,8 +276,8 @@ class SalesforceClient:
 
         These endpoints return a bare {id, success, errors} with no `created`
         flag — only the external-ID upsert endpoint reports one. We know which
-        pass each record went through, so we set it here: callers (and
-        test_upsert_update.py) still get insert-vs-update per record.
+        pass each record went through, so we set it here, and callers still get
+        insert-vs-update per record.
         """
         if method not in WRITE_METHODS:
             raise ValueError(

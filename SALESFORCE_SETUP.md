@@ -127,9 +127,11 @@ updated or mistaken for a new one.
 > much as FLS here: if Contact org-wide default is Private and these Contacts
 > are owned by someone else, the sync cannot see them.
 >
-> If a run reports `DUPLICATE_VALUE`, run `python diagnose_duplicates.py`. It
-> classifies each failure and says whether the fix is **View All** on Contact,
-> emptying the Recycle Bin, or something else. Enabling **View All** (read) —
+> If a run reports `DUPLICATE_VALUE`, the failing ids need classifying: query
+> them via `/queryAll` (a soft-deleted Contact is invisible to a normal query
+> but still holds the unique index) and check what the integration user can
+> see. The fix is then **View All** on Contact, emptying the Recycle Bin, or
+> something else. Enabling **View All** (read) —
 > and **Modify All** if the records also need to be *written* by a user who
 > doesn't own them — is the intended remedy for that diagnosis.
 
@@ -137,11 +139,11 @@ updated or mistaken for a new one.
 
 - Object Permissions: ✅ **Read**, ✅ **Create**, ✅ **Edit**
   (Delete stays off. See the note above before deciding on View All /
-  Modify All — they are off by default, but are the fix if the diagnostic
-  reports `INVISIBLE` records.)
+  Modify All — they are off by default, but are the fix when the failing
+  Contacts turn out to be invisible to the integration user.)
 
-  > **On granting Modify All.** It is the standard remedy for `INVISIBLE`
-  > records, but it also confers **delete** on every Contact in the org.
+  > **On granting Modify All.** It is the standard remedy for Contacts the
+  > integration user cannot see, but it also confers **delete** on every Contact in the org.
   >
   > The sync itself cannot delete: `salesforce_client.WRITE_METHODS` pins the
   > `/composite/sobjects` call to `PATCH`/`POST`, so no delete request can be

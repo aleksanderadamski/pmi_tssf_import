@@ -190,20 +190,22 @@ Salesforce data:
    the whole PEM, `BEGIN`/`END` lines included — **not** `SF_PRIVATE_KEY_FILE`,
    since no file ships to a runner). `FAILURE_WEBHOOK_URL` too if §10's
    alerting is wanted.
-2. **Manual-trigger workflow** (`on: workflow_dispatch`) running only the
-   read-only scripts: `test_sf_auth.py`, then `report_sentinel_dates.py`. This
+2. **Manual-trigger workflow** (`on: workflow_dispatch`) running only
+   `test_sf_auth.py`. It authenticates and runs a trivial SOQL query, so it
    proves the secrets work with zero risk to Salesforce data.
 
-   **Upload `output/sentinel_conflicts_*.csv` only — never `output/*.csv`.**
-   That glob would sweep in `members.csv`, which the report always refreshes:
-   ~2,464 members' names, emails and PMI ids, uploaded as an artifact anyone
-   with repo read access can download, retained 90 days by default. `output/`
-   is gitignored precisely to keep that data off GitHub; a wildcard artifact
-   path quietly undoes it. Set an explicit short `retention-days` too.
-3. **Then** the scheduled `--push-salesforce` job from §10, reusing the same
-   secrets, plus `diagnose_duplicates.py` — it needs an
-   `output/upsert_failures_*.csv` to read and exits immediately on a fresh
-   runner, so it only becomes useful once a push has run.
+   **Think about PII content, not the glob.** `output/` is gitignored precisely
+   to keep member data off GitHub, and an artifact upload walks it straight past
+   that. `members.csv` is ~2,464 members' names, emails and PMI ids — but
+   `upsert_failures_*.csv` is *also* names and PMI ids (`reporting.FAILURE_FIELDS`),
+   so "upload only the failure CSV" is not the safe-sounding compromise it looks
+   like. Either upload nothing and read the run log, or accept that the artifact
+   carries member data, set a short explicit `retention-days`, and keep the repo
+   private. Artifacts are downloadable by anyone with repo read access and are
+   retained 90 days by default.
+3. **Then** the scheduled `--push-salesforce` job from §10 with `verify_push.py`
+   straight after it — that is the post-run gate, it reads the manifest the push
+   writes and exits non-zero on any discrepancy.
 
 Alternative if an interactive shell is wanted rather than a button:
 **Codespaces** runs a full Linux VM in the browser (`pip install -r
@@ -213,7 +215,7 @@ Python; it is not an option here.
 
 ## 12. One member did not resolve to a Contact — RESOLVED 2026-09-18
 
-`report_sentinel_dates.py` resolved 1,087 of 1,088 members and labelled the
+A one-off report (since removed) resolved 1,087 of 1,088 members and labelled the
 last one "NOT VISIBLE". That label is broader than it sounds — the SOQL simply
 returned nothing, which is equally true of a Contact hidden by record-level
 sharing (the cause of the 209 `DUPLICATE_VALUE` failures) and of a member with
@@ -273,9 +275,28 @@ reach a push at all. The fix matters for the future: *if* a currently-active
 member ever carries a sentinel row alongside a real one, the dedupe now keeps
 the real date and the next push writes it, instead of silently discarding it.
 
-Re-check with `report_sentinel_dates.py` §1 whenever the source changes: a
-per-member `omitted` count above zero is now a source fact (every row that
-member has is sentinel), no longer something the merge could manufacture.
+If the source ever changes shape, re-check that a member's dates are not all
+sentinel: after this fix that can only be a source fact, no longer something the
+merge could manufacture.
+
+## 13b. If `DUPLICATE_VALUE` returns — what the 2026-09-18 triage established
+
+Kept because re-deriving it cost a production run:
+
+- **It was deterministic.** Re-running with freshly pulled ThoughtSpot data
+  reproduced the same 209 failures exactly. A blind retry is not a strategy.
+- **All 209 were invisible to the integration user**, not soft-deleted. The fix
+  was **View All + Modify All** on Contact — View All alone makes them resolve
+  and then fail the PATCH with `INSUFFICIENT_ACCESS_OR_READONLY`.
+- **A Recycle Bin collision is NOT fixed by the two-pass write.** A soft-deleted
+  Contact is invisible to the resolve query but still holds the unique index, so
+  the insert still collides. Those need restoring or hard-purging first.
+- **Only `DUPLICATE_VALUE` rows are triageable this way.** A
+  `REQUIRED_FIELD_MISSING` row is legitimately absent from both `query` and
+  `queryAll`, and would be misread as a permissions problem.
+
+`diagnose_duplicates.py` automated this classification and is recoverable from
+git history (see CLAUDE.md > Retired tooling).
 
 ## 14. "Salesforce mangles Polish names" — investigated 2026-09-19, NOT reproduced
 
@@ -288,13 +309,12 @@ Evidence, strongest first:
 - `verify_push.py` compares `FirstName`/`LastName` (and every other mapped
   field) for **all 2,464** records the last push sent. It reported mismatches in
   `Email` only. Nothing is folding what we send.
-- `diagnose_diacritics.py` then traced accented members end to end: sent and
-  stored equal at every stage.
+- A one-off tracer (since removed — see CLAUDE.md > Retired tooling) then
+  followed accented members end to end: sent and stored equal at every stage.
 - Nothing in the fetch → transform → payload path calls `unicodedata`,
   `normalize`, or encodes to ASCII, and `requests`' `json=` escapes non-ASCII
-  losslessly as `\uXXXX`. (The read-only checkers do: `verify_push.py`
-  NFC-normalizes its *comparison* and `diagnose_diacritics.py` uses NFKD to
-  classify a fold. Neither touches what is written.)
+  losslessly as `\uXXXX`. (`verify_push.py` does NFC-normalize its
+  *comparison*, which is a different act from normalizing what is written.)
 
 What was measured upstream: **182 of 2,467** currently-active members carry a
 non-ASCII character in a name field in ThoughtSpot; the rest arrive as ASCII
@@ -314,14 +334,15 @@ a genuinely folded accent fails.
 **What it does not cover:** the baseline is the push manifest, written *after*
 the ThoughtSpot fetch, so it verifies the manifest → Salesforce leg only. If
 `/searchdata` itself began folding characters, the manifest and Salesforce would
-agree and it would pass indefinitely. Only `diagnose_diacritics.py` looks at
-that leg — which is why the open hypothesis above is about the source, and why a
-recurrence should be traced with a specific PMI id rather than re-run in bulk.
+agree and it would pass indefinitely. Nothing covers that leg now, which is why
+the only hypothesis left open is about the source.
 
 If it is reported again, do this rather than re-deriving: get the **specific**
-PMI id and run `python diagnose_diacritics.py <id>`. A sample cannot refute a
-claim about one person — a Salesforce Flow scoped by owner, record type or
-created-date would fold some records and not others. If that trace shows
+PMI id, and compare that member's `/searchdata` value against both the
+ThoughtSpot UI and the stored Contact. A sample cannot refute a claim about one
+person — a Salesforce Flow scoped by owner, record type or created-date would
+fold some records and not others. (`diagnose_diacritics.py` did exactly this and
+is recoverable from git history.) If that trace shows
 ThoughtSpot supplying an accented name and Salesforce storing a folded one,
 this conclusion is overturned and the culprit is org-side.
 

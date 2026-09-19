@@ -39,9 +39,8 @@ Three checks:
   3. Coverage. How many Contacts carry each certification field, so a field
      that silently landed empty everywhere is visible as a zero.
 
-Fields the source would OMIT are skipped by design — report_sentinel_dates.py
-covers those. See "What this does NOT prove" in the output for the gap neither
-script closes.
+Fields the source would OMIT are skipped by design. See "What this does NOT
+prove" in the output for the gap that leaves.
 """
 import csv
 import glob
@@ -96,7 +95,7 @@ LOWERCASED_BY_SALESFORCE = {"Email"}
 
 
 def compare(sf_field, want, got) -> str:
-    """'match', 'case-only', or 'mismatch'.
+    """One of 'match', 'nfc-only', 'lowercased', or 'mismatch'.
 
     The `got is None` branch is load-bearing: a plain str() comparison would
     equate a real Python None from Salesforce with the literal string "None",
@@ -352,12 +351,11 @@ def main():
     print("  populated for ZERO members is the suspicious case.")
 
     print("\n### What this does NOT prove\n")
-    print("  A field the sync BLANKED is invisible to both checkers. This script")
-    print("  skips fields the source would omit, and report_sentinel_dates.py")
-    print("  counts an already-empty field as '0 conflicts' — which reads as a")
-    print("  pass. Neither holds a before-snapshot, so a regression that started")
-    print("  writing nulls would show up as clean in both. The guard against that")
-    print("  is the omit rule in salesforce_client itself, not this script.")
+    print("  A field the sync BLANKED is invisible here: this script skips the")
+    print("  fields the source would omit, and holds no before-snapshot, so a")
+    print("  regression that started writing nulls would show up as clean. The")
+    print("  guard against that is the omit rule in salesforce_client itself,")
+    print("  not this script.")
 
     failed = bool(leaked) or bool(mismatches) or bool(missing) or bool(ambiguous)
     if failed:
